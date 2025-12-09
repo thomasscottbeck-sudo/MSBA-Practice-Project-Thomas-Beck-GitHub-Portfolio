@@ -1,0 +1,506 @@
+---
+title: "Discovery Phase: EDA"
+subtitle: "Individual Exploratory Analysis on Home Credit's Data Sources"
+author: "Thomas Beck"
+date: "Fall 2025"
+format:
+  html:
+    embed-resources: true
+    theme: journal
+    toc: true
+    toc-depth: 3
+    toc-float: true
+    number-sections: false
+    code-fold: true
+    code-tools: true
+    df-print: paged
+    highlight-style: github
+  pdf:
+    documentclass: article
+    geometry:
+      - margin=1in
+    toc: true
+    number-sections: false
+    colorlinks: true
+    mainfont: "Arial"
+    sansfont: "Arial"
+    monofont: "Courier New"
+editor: visual
+---
+
+```{r setup, include=FALSE}
+# Global chunk options
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.width = 10, fig.height = 6, dpi = 300,
+  fig.align = "center"
+)
+
+# Dynamic root fix
+if (!require("here")) install.packages("here")
+library(here)
+knitr::opts_knit$set(root.dir = here::here())
+
+# Cpu optimization
+library(parallel)
+num_cores <- parallel::detectCores(logical = FALSE) - 1
+options(mc.cores = num_cores)
+
+# Custom project palette
+project_cols <- c(
+  teal      = "#00534B", # Primary (Good/Repaid)
+  orange    = "#F05627", # High Contrast (Bad/Default)
+  green     = "#66BB6A", # Secondary Green
+  purple    = "#523348", # Dark Purple
+  beige     = "#C2BEB6", # Neutral
+  skyblue   = "#A9C0CB", # Light Blue
+  navyblue  = "#242C3E", # Deep Navy
+  gray      = "#645E5F"  # Text/Grid
+)
+
+set.seed(1234)
+```
+
+::: callout-note
+## Project Context
+
+This document represents the **individual discovery phase** of the Home Credit Default Risk project. The primary objective was to validate the hypothesis that "Alternative Data" (External Sources and Stability Metrics) could outperform traditional demographic markers.
+:::
+
+# 1. The Business Problem
+
+**Business Problem:** A large portion of Home Credit’s target customer population struggles to access loans because they lack sufficient or traditional credit histories. This exclusion can leave them vulnerable to predatory lenders or unable to pursue opportunities such as housing, education, or entrepreneurship. Home Credit’s mission is to expand financial inclusion by offering responsible lending to underserved populations. The challenge is that it’s very difficult to evaluate how likely someone is to repay a loan when standard financial records or credit history are absent. Instead of clear signals like years of credit card payments or mortgage history, a picture of repayment ability must be pieced together from alternative data sources, which makes the decision process much more complex. Underestimating risk exposes Home Credit to financial losses, while overestimating it prevents creditworthy clients that are typically excluded from receiving loans - limiting both business growth and customer impact.
+
+**Benefit of a Solution:** A model that can successfully and reliably predict default risk would directly support Home Credit’s mission. With a more accurate way to predict default, more loans could be extended to reliable borrowers, default rates reduced, and repayment plans designed to be affordable, thus reducing Home Credit’s risk. This would help safely offer more loans and expand revenue, while at the same time strengthening customer relationships by building fairness and loyalty into the lending process.
+
+**Success Metrics:** The project’s success will be measured by how accurately the model can predict default risk. \## 1.1 Guiding Questions for Exploration
+
+To structure the analysis, I formulated the following guiding questions:
+
+1.  **Imbalance:** How severe is the class imbalance, and what is the baseline accuracy of a "majority class" classifier?
+2.  **Data Quality:** Which variables suffer from high missingness, and are there patterns in the missing data?
+3.  **Alternative Data:** Do "External Source" scores (1, 2, 3) actually correlate with default risk as hypothesized?
+4.  **Stability:** Does applicant stability (age, employment duration) serve as a better predictor than income amount?
+5.  **Demographics:** Are certain family statuses or education levels inherently riskier?
+6.  **Comparison:** How well does semantic domain knowledge (via AI) align with empirical data findings?
+
+# 2. AI Usage Log - ChatGPT4o
+
+I used an AI assistant to generate a hypothesis list of predictors before diving into the analysis. **Prompt Used:**
+
+> Act as a credit risk analyst.
+>
+> I am working on the Home Credit Default Risk project. The goal is to predict the binary target variable TARGET (1 = client with payment difficulties, 0 = all other cases).
+>
+> Below are the column names from the dataset.
+>
+> Based ONLY on the meaning of the variables (semantics) and NOT on any data analysis: 1. Identify the top 15-20 variables you believe would be most predictive of TARGET. 2. For each variable, provide a brief explanation of why you expect it to be predictive.
+>
+> Here is the list of columns: *(reformatted for brevity)*
+
+| Column 1 | Column 2 | Column 3 |
+|:---|:---|:---|
+| SK_ID_CURR | REGION_POPULATION_RELATIVE | REG_REGION_NOT_LIVE_REGION |
+| TARGET | DAYS_BIRTH | REG_REGION_NOT_WORK_REGION |
+| NAME_CONTRACT_TYPE | DAYS_EMPLOYED | LIVE_REGION_NOT_WORK_REGION |
+| CODE_GENDER | DAYS_REGISTRATION | REG_CITY_NOT_LIVE_CITY |
+| FLAG_OWN_CAR | DAYS_ID_PUBLISH | REG_CITY_NOT_WORK_CITY |
+| FLAG_OWN_REALTY | OWN_CAR_AGE | LIVE_CITY_NOT_WORK_CITY |
+| CNT_CHILDREN | FLAG_MOBIL | ORGANIZATION_TYPE |
+| AMT_INCOME_TOTAL | FLAG_EMP_PHONE | EXT_SOURCE_1 |
+| AMT_CREDIT | FLAG_WORK_PHONE | EXT_SOURCE_2 |
+| AMT_ANNUITY | FLAG_CONT_MOBILE | EXT_SOURCE_3 |
+| AMT_GOODS_PRICE | FLAG_PHONE | APARTMENTS_AVG |
+| NAME_TYPE_SUITE | FLAG_EMAIL | BASEMENTAREA_AVG |
+| NAME_INCOME_TYPE | OCCUPATION_TYPE | YEARS_BEGINEXPLUATATION_AVG |
+| NAME_EDUCATION_TYPE | CNT_FAM_MEMBERS | YEARS_BUILD_AVG |
+| NAME_FAMILY_STATUS | REGION_RATING_CLIENT | COMMONAREA_AVG |
+| NAME_HOUSING_TYPE | REGION_RATING_CLIENT_W_CITY | ELEVATORS_AVG |
+| ENTRANCES_AVG | APARTMENTS_MEDI | DAYS_LAST_PHONE_CHANGE |
+| FLOORSMAX_AVG | BASEMENTAREA_MEDI | FLAG_DOCUMENT_2 |
+| FLOORSMIN_AVG | YEARS_BEGINEXPLUATATION_MEDI | FLAG_DOCUMENT_3 |
+| LANDAREA_AVG | YEARS_BUILD_MEDI | FLAG_DOCUMENT_4 |
+| LIVINGAPARTMENTS_AVG | COMMONAREA_MEDI | FLAG_DOCUMENT_5 |
+| LIVINGAREA_AVG | ELEVATORS_MEDI | FLAG_DOCUMENT_6 |
+| NONLIVINGAPARTMENTS_AVG | ENTRANCES_MEDI | FLAG_DOCUMENT_7 |
+| NONLIVINGAREA_AVG | FLOORSMAX_MEDI | FLAG_DOCUMENT_8 |
+| APARTMENTS_MODE | FLOORSMIN_MEDI | FLAG_DOCUMENT_9 |
+| BASEMENTAREA_MODE | LANDAREA_MEDI | FLAG_DOCUMENT_10 |
+| YEARS_BEGINEXPLUATATION_MODE | LIVINGAPARTMENTS_MEDI | FLAG_DOCUMENT_11 |
+| YEARS_BUILD_MODE | LIVINGAREA_MEDI | FLAG_DOCUMENT_12 |
+| COMMONAREA_MODE | NONLIVINGAPARTMENTS_MEDI | FLAG_DOCUMENT_13 |
+| ELEVATORS_MODE | NONLIVINGAREA_MEDI | FLAG_DOCUMENT_14 |
+| ENTRANCES_MODE | FONDKAPREMONT_MODE | FLAG_DOCUMENT_15 |
+| FLOORSMAX_MODE | HOUSETYPE_MODE | FLAG_DOCUMENT_16 |
+| FLOORSMIN_MODE | TOTALAREA_MODE | FLAG_DOCUMENT_17 |
+| LANDAREA_MODE | WALLSMATERIAL_MODE | FLAG_DOCUMENT_18 |
+| LIVINGAPARTMENTS_MODE | EMERGENCYSTATE_MODE | FLAG_DOCUMENT_19 |
+| LIVINGAREA_MODE | OBS_30_CNT_SOCIAL_CIRCLE | FLAG_DOCUMENT_20 |
+| NONLIVINGAPARTMENTS_MODE | DEF_30_CNT_SOCIAL_CIRCLE | FLAG_DOCUMENT_21 |
+| NONLIVINGAREA_MODE | OBS_60_CNT_SOCIAL_CIRCLE | AMT_REQ_CREDIT_BUREAU_HOUR |
+| WEEKDAY_APPR_PROCESS_START | DEF_60_CNT_SOCIAL_CIRCLE | AMT_REQ_CREDIT_BUREAU_DAY |
+| HOUR_APPR_PROCESS_START | AMT_REQ_CREDIT_BUREAU_WEEK | AMT_REQ_CREDIT_BUREAU_MON |
+| AMT_REQ_CREDIT_BUREAU_QRT | AMT_REQ_CREDIT_BUREAU_YEAR |  |
+
+**ChatGPT said:** Here is a semantic-based selection of the top 20 variables most likely to be predictive of the TARGET variable in the Home Credit Default Risk project. The logic is grounded in financial risk analysis and borrower behavior theory, not empirical correlation.
+
+🧠 **Top 20 Predictive Variables (Based on Semantics)**
+
+1.  **AMT_INCOME_TOTAL** Why: Borrower’s total income is directly tied to their repayment ability. Lower income increases risk of default.
+2.  **AMT_CREDIT** Why: The loan amount itself. Higher amounts relative to income imply greater repayment burden and risk.
+3.  **AMT_ANNUITY** Why: The amount to be repaid annually. High annuity-to-income ratios (debt burden) are strong predictors of default.
+4.  **AMT_GOODS_PRICE** Why: Indicates value of goods being financed. May reflect over-leveraging or riskier purchases (e.g., luxury items).
+5.  **NAME_INCOME_TYPE** Why: Employment status (e.g., “Working”, “Pensioner”, “Unemployed”) reflects financial stability and risk of income interruption.
+6.  **DAYS_EMPLOYED** Why: Duration of employment. Shorter tenures or odd values (e.g., 365243 for missing) can signal unstable work history.
+7.  **DAYS_BIRTH** Why: Age of borrower. Very young or very old applicants may be higher risk due to life stage or fixed income.
+8.  **EXT_SOURCE_1, EXT_SOURCE_2, EXT_SOURCE_3 (grouped)** Why: External risk scores. These likely come from credit bureaus or scoring models and are powerful indicators of default probability.
+9.  **OCCUPATION_TYPE** Why: Certain jobs are more stable (e.g., “Accountants”) vs. riskier (e.g., “Laborers”). Strong proxy for job stability.
+10. **CNT_CHILDREN** Why: More children often implies greater financial strain and lower disposable income.
+11. **CNT_FAM_MEMBERS** Why: Larger families increase cost of living and reduce buffer against financial shocks.
+12. **NAME_EDUCATION_TYPE** Why: Higher education correlates with higher income and financial literacy, which generally reduce default risk.
+13. **NAME_FAMILY_STATUS** Why: Marital status can affect financial stability. For example, “Married” often correlates with dual-income households.
+14. **OWN_CAR_AGE** Why: Age of car can signal financial capacity. Very old or no car could imply either frugality or financial constraint.
+15. **DAYS_REGISTRATION** Why: How long the applicant has been registered at their address. Short durations may imply instability or transience.
+16. **DAYS_ID_PUBLISH** Why: Reflects how recently their ID was issued. Very new IDs may suggest recent identity change, a potential fraud risk.
+17. **REGION_RATING_CLIENT / REGION_RATING_CLIENT_W_CITY** Why: These are likely proxies for area-level economic quality. Poorer regions have higher default risk.
+18. **NAME_HOUSING_TYPE** Why: Housing type reflects stability. For example, “Rented apartment” may indicate less security than “House / apartment” ownership.
+19. **AMT_REQ_CREDIT_BUREAU_YEAR** Why: Number of credit bureau checks in the last year. High frequency can indicate financial distress or credit-seeking behavior.
+20. **DEF_30_CNT_SOCIAL_CIRCLE / DEF_60_CNT_SOCIAL_CIRCLE** Why: Number of defaults in a person’s social circle (e.g., friends or family). Social clustering of financial behavior is a known risk factor.
+
+✅ **Notes:** Variables like SK_ID_CURR, TARGET, and most FLAG_DOCUMENT\_\* indicators are likely less predictive by themselves without deeper context. All selections are semantics-driven: we assume no access to actual values or correlations. Many of the MEDI/MODE/AVG housing variables are too granular and heavily missing in many cases, thus excluded from top 20 for practicality. Let me know if you want a second-tier list (runners-up) or want to group these by feature type (demographic, financial, credit behavior, etc.).
+
+> **My Critique:** The AI's reasoning is sound. It prioritized "stability" metrics (employment, age, income type) which aligns perfectly with the business problem of assessing unbanked clients. It identified AMT_CREDIT as a top predictor, although the suspicion is that the ratio of credit to income will matter more than the raw number. The EDA will focus on validating these specific hypotheses.
+
+# 3. Data Preparation & Feature Engineering
+
+Analysis begins with data loading and feature engineering to handle known issues such as negative time values.
+
+```{r libraries}
+# Load libraries
+library(tidyverse)
+library(skimr)
+library(corrplot)
+library(VennDiagram)
+library(grid)
+library(knitr)
+library(scales)
+library(gridExtra)
+```
+
+```{r load_data}
+# Safe load
+if(file.exists(here("application_train.csv"))) {
+  train <- read.csv(here("application_train.csv"))
+} else {
+  stop("CRITICAL ERROR: 'application_train.csv' not found in project root.")
+}
+
+# Data Integration (Bureau)
+# join the application data with transactional history to capture past credit behavior
+if(file.exists(here("bureau.csv"))) {
+  bureau <- read.csv(here("bureau.csv"))
+  
+  # Aggregate
+  bureau_agg <- bureau %>%
+    group_by(SK_ID_CURR) %>%
+    summarise(
+      PREV_LOANS_COUNT = n()
+    )
+  
+  # Join to main training data
+  train_cleaned <- train %>%
+    left_join(bureau_agg, by = "SK_ID_CURR") %>%
+    mutate(
+      PREV_LOANS_COUNT = ifelse(is.na(PREV_LOANS_COUNT), 0, PREV_LOANS_COUNT)
+    )
+    
+  cat("Bureau data joined. Added column: PREV_LOANS_COUNT")
+} else {
+  # Fallback if file missing
+  train_cleaned <- train
+  warning("Bureau data not found.")
+}
+
+# Feature engineering
+train_cleaned <- train_cleaned %>%
+  mutate(
+    AGE_YEARS = abs(DAYS_BIRTH) / 365,
+    DAYS_EMPLOYED_FIXED = ifelse(DAYS_EMPLOYED == 365243, NA, DAYS_EMPLOYED),
+    YEARS_EMPLOYED = abs(DAYS_EMPLOYED_FIXED) / 365,
+    TARGET_LABEL = factor(TARGET, labels = c("Repayer", "Defaulter"))
+  )
+
+# Impute missing values
+med_ext1 <- median(train_cleaned$EXT_SOURCE_1, na.rm = TRUE)
+train_cleaned$export_source_1_imputed <- ifelse(is.na(train_cleaned$EXT_SOURCE_1), 
+                                                med_ext1, 
+                                                train_cleaned$EXT_SOURCE_1)
+```
+
+# 4. Exploratory Data Analysis
+
+## Target Balance & Majority Class Accuracy
+
+Vizualization of target distribution to understand class imbalance.
+
+```{r target_viz}
+# Calculate counts
+target_counts <- table(train_cleaned$TARGET)
+majority_accuracy <- max(target_counts) / sum(target_counts)
+
+# Plot target distribution
+ggplot(train_cleaned, aes(x = TARGET_LABEL, fill = TARGET_LABEL)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=-0.5) +
+  scale_fill_manual(values = c(project_cols["teal"], project_cols["orange"])) +
+  labs(title = "Distribution of TARGET Variable", 
+       subtitle = paste0("Baseline Accuracy (Majority Class Classifier): ", round(majority_accuracy * 100, 2), "%"),
+       x = "Repayment Status", 
+       y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+As the plot shows, the data is extremely imbalanced. Only about 8% of applicants default. A naive model that predicts "Repayer" for everyone would achieve **91.93% accuracy**. This indicates that accuracy will be a bad metric for modeling later on, and we will need to rely on AUC to rank the risks properly. \## Missing Data Investigation
+
+```{r missingness}
+# Calculate missing rates
+missing_summary <- train_cleaned %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "MissingRate") %>%
+  filter(MissingRate > 0) %>%
+  arrange(desc(MissingRate)) %>%
+  head(15)
+
+# Plot top missing
+ggplot(missing_summary, aes(x = reorder(Variable, MissingRate), y = MissingRate)) +
+  geom_col(fill = project_cols["orange"]) +
+  coord_flip() +
+  labs(title = "Variables with Highest Missing Data Rates",
+       x = "Variable",
+       y = "Proportion Missing") +
+  theme_minimal()
+```
+
+This confirms the business problem. The housing data (common area, non-living area) is missing for over 60% of applicants. Collateral or asset-based predictors definitely cannot be relied upon. Interestingly, EXT_SOURCE_1 is missing about 50% of the time but the AI flagged it as critical. \## Distribution of Key Risk Drivers
+
+To test the AI's hypothesis that "External Sources" and "Age" are the key drivers is tested with density plots of these variables for both repayers (Teal) and defaulters (Orange) is plotted to see if there is a visible separation.
+
+```{r density_plots}
+# Helper function
+plot_density <- function(data, var, title, xlab) {
+  ggplot(data, aes(x = .data[[var]], fill = TARGET_LABEL)) +
+    geom_density(alpha = 0.5) +
+    scale_fill_manual(values = c("#00534B", "#F05627")) +
+    labs(title = title, x = xlab, y = "Density", fill = "Status") +
+    theme_minimal() +
+    theme(legend.position = "top")
+}
+
+# Create plots
+p1 <- plot_density(train_cleaned, "EXT_SOURCE_3", "External Score 3", "Score (Normalized)")
+p2 <- plot_density(train_cleaned, "EXT_SOURCE_2", "External Score 2", "Score (Normalized)")
+p3 <- plot_density(train_cleaned, "AGE_YEARS", "Applicant Age", "Age (Years)")
+p4 <- plot_density(train_cleaned, "YEARS_EMPLOYED", "Employment Stability", "Years Employed")
+
+# Arrange plots
+gridExtra::grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+The visuals confirm the hypothesis. \* **External Sources:** There is a distinct shift to the left for defaulters, meaning lower scores equal higher risk. \* **Age:** Defaulters are noticeably younger (peaking around 30) while repayers are older. \* **Employment:** Defaulters tend to have very little employment history (peaking near 0 years). \## Categorical Analysis: Default Rates by Group
+
+A deeper analysis into the specific default rates for different demographics is required. A bar chart combined with a baseline reference line is used to see which groups are riskier than the average (8.1%).
+
+```{r categorical_viz_func}
+# Function to plot default rates
+plot_cat_default <- function(df, variable_name) {
+  
+  base_rate <- mean(as.numeric(as.character(df$TARGET)) == 1, na.rm = TRUE)
+  
+  summary_data <- df %>%
+    filter(!is.na(.data[[variable_name]])) %>%
+    group_by(.data[[variable_name]]) %>%
+    summarise(
+      Count = n(),
+      Default_Count = sum(TARGET == 1),
+      Default_Rate = mean(TARGET == 1) * 100
+    ) %>%
+    mutate(Variable = variable_name) %>%
+    arrange(desc(Default_Rate))
+  
+  ggplot(summary_data, aes(x = reorder(.data[[variable_name]], Default_Rate), y = Default_Rate)) +
+    geom_col(width = 0.6, fill = project_cols["teal"]) +
+    geom_hline(yintercept = base_rate * 100, linetype = "dashed", color = project_cols["orange"], size = 1) +
+    geom_text(aes(label = sprintf("%.1f%%", Default_Rate)), vjust = -0.5, size = 3.5) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+    labs(title = paste("Default Rate by", variable_name),
+         subtitle = paste("Dashed line represents population average default rate (", round(base_rate*100, 1), "%)", sep=""),
+         x = variable_name, 
+         y = "Default Rate (%)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+### Income Type
+
+First, the source of income is examined.
+
+```{r income_viz}
+# Plot income type
+income_subset <- train_cleaned %>%
+  group_by(NAME_INCOME_TYPE) %>%
+  filter(n() > 1000) %>%
+  ungroup()
+
+plot_cat_default(income_subset, "NAME_INCOME_TYPE")
+```
+
+The plot confirms it. Working applicants are actually riskier than the average, while pensioners and state servants are much safer. This suggests stability of income is more important than potentially high but unstable income. \### Education Type
+
+Next, education level is checked to see if it acts as a proxy for financial literacy or stability
+
+```{r education_viz}
+# Plot education type
+plot_cat_default(train_cleaned, "NAME_EDUCATION_TYPE")
+```
+
+There is a huge spread here. People with only Lower Secondary education default at nearly 11%, while those with Academic degrees are extremely safe (under 2%). \### Family Status
+
+Finally, family situation is analyzed to see if it impacts repayment.
+
+```{r family_viz}
+# Plot family status
+plot_cat_default(train_cleaned, "NAME_FAMILY_STATUS")
+```
+
+Single people and those in civil marriages are the riskiest groups. Widows are the safest. This again aligns with the age finding, as widows tend to be older. \### Transactional History
+
+```{r bureau_viz}
+# Plot previous loan count impact
+if("PREV_LOANS_COUNT" %in% names(train_cleaned)) {
+  plot_data <- train_cleaned %>%
+    mutate(Loan_Count_Group = ifelse(PREV_LOANS_COUNT >= 10, "10+", as.character(PREV_LOANS_COUNT)))
+  
+  plot_cat_default(plot_data, "Loan_Count_Group") +
+    labs(title = "Default Rate by Number of Previous Bureau Loans",
+         subtitle = "Do more past loans indicate higher risk?")
+}
+```
+
+Categories with the highest default rates are analyzed to identify areas of risk. The faceted plot below highlights the specific attributes driving default risk across multiple categories.
+
+```{r categorical_risk_plot, fig.height=10}
+# select categorical features for dashboard
+cat_features <- c("NAME_CONTRACT_TYPE", "CODE_GENDER", "FLAG_OWN_REALTY",
+                  "NAME_INCOME_TYPE", "NAME_EDUCATION_TYPE", "NAME_HOUSING_TYPE")
+
+# prep data for faceted plot
+risk_data <- train_cleaned %>%
+  select(all_of(cat_features), TARGET) %>%
+  pivot_longer(cols = -TARGET, names_to = "Feature", values_to = "Value") %>%
+  group_by(Feature, Value) %>%
+  summarise(
+    Count = n(),
+    Default_Rate = mean(as.numeric(as.character(TARGET))),
+    .groups = "drop"
+  ) %>%
+  filter(Count > 0.01 * nrow(train_cleaned)) # remove rare categories
+
+# plot risk dashboard
+ggplot(risk_data, aes(x = reorder(Value, Default_Rate), y = Default_Rate, fill = Default_Rate)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~Feature, scales = "free_y", ncol = 2) +
+  scale_fill_gradient(low = project_cols["purple"], high = project_cols["orange"]) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Default Risk by Applicant's Categorical Attributes",
+       subtitle = "Risk intensity (Orange) vs. Safety (purple) across key categories",
+       x = NULL, y = "Default Rate") +
+  theme(legend.position = "none",
+        axis.text.y = element_text(size = 8))
+```
+
+Income source displays significant risk variance, with unemployed applicants and those on maternity leave exhibiting the highest default rates.
+
+## Numeric Correlations
+
+```{r numeric_correlations}
+# Calculate numeric correlations
+numeric_cols <- train_cleaned |> select(where(is.numeric))
+cors <- vapply(numeric_cols, function(x) suppressWarnings(cor(x, as.integer(as.character(train_cleaned$TARGET)), use = "complete.obs")), numeric(1))
+
+corr_tbl <- tibble(Variable = names(cors), Correlation = round(unname(cors), 3)) |>
+  filter(Variable != "TARGET") |> 
+  arrange(desc(abs(Correlation))) |> 
+  slice_head(n = 12)
+
+knitr::kable(corr_tbl, caption = "Top Numeric Correlations")
+
+# Visualize correlations with plot
+ggplot(corr_tbl, aes(x = reorder(Variable, abs(Correlation)), y = Correlation, fill = Correlation)) +
+  geom_col(width = .6) +
+  coord_flip() +
+  scale_fill_gradient2(low = project_cols["purple"], high = project_cols["orange"], mid = project_cols["beige"], midpoint = 0) +
+  labs(title = "Top Numeric Correlations with Target", 
+       subtitle = "Blue = Lower Risk (Negative Correlation) | Red = Higher Risk (Positive Correlation)",
+       x = NULL, y = "Pearson r") +
+  theme(plot.title.position = "plot", legend.position = "bottom")
+```
+
+## AI vs Data Comparison
+
+A visual comparison is made between what the AI predicted versus what the data actually showed
+
+```{r venn_diagram, fig.height=4, fig.width=4}
+# Venn diagram: ai vs data
+venn.plot <- venn.diagram(
+  x = list(
+    "AI Hypothesis" = c("EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "DAYS_BIRTH", "AMT_CREDIT"),
+    "Data Reality" = c("EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "DAYS_BIRTH", "DAYS_EMPLOYED")
+  ),
+  filename = NULL,
+  fill = c(project_cols["teal"], project_cols["orange"]),
+  alpha = 0.5,
+  cex = 1.2,
+  cat.cex = 1,
+  cat.pos = c(-20, 20),
+  main = "Feature Overlap: Semantic vs. Statistical"
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+```
+
+There is strong overlap (4 variables). The main difference is that the AI focused on Loan Amount (`AMT_CREDIT`), but the data showed that Employment Length (`DAYS_EMPLOYED`) was actually a stronger linear predictor. \## Data-Informed Feature Selection
+
+BBased on the statistical evidence gathered (Correlations, Density Separation, and Categorical Lift), the top 20 most promising predictors have been identified for the subsequent modeling phase.
+
+| Rank | Variable Name | Notes |
+|:---|:---|:---|
+| 1 | **EXT_SOURCE_3** | Strongest negative correlation with default. |
+| 2 | **EXT_SOURCE_2** | Second strongest external predictor. |
+| 3 | **EXT_SOURCE_1** | Significant when imputed. |
+| 4 | **DAYS_BIRTH** | Younger applicants show markedly higher risk. |
+| 5 | **DAYS_EMPLOYED** | Shorter employment duration correlates with default. |
+| 6 | **NAME_EDUCATION_TYPE** | "Lower Secondary" education is a strong risk flag. |
+| 7 | **NAME_INCOME_TYPE** | "Pensioner" status is a strong safety flag. |
+| 8 | **REGION_RATING_CLIENT_W_CITY** | Location-based risk score shows strong variance. |
+| 9 | **REGION_RATING_CLIENT** | Correlates highly with city rating. |
+| 10 | **DAYS_LAST_PHONE_CHANGE** | Recent changes indicate instability. |
+| 11 | **CODE_GENDER** | Men have a slightly higher default rate than women. |
+| 12 | **AMT_GOODS_PRICE** | Loan purpose value. |
+| 13 | **AMT_CREDIT** | Total loan amount. |
+| 14 | **DAYS_ID_PUBLISH** | Recency of ID change tracks with age/stability. |
+| 15 | **REG_CITY_NOT_WORK_CITY** | Commuting/Address mismatch flag. |
+| 16 | **DEF_30_CNT_SOCIAL_CIRCLE** | Observed defaults in social circle. |
+| 17 | **DEF_60_CNT_SOCIAL_CIRCLE** | Long-term defaults in social circle. |
+| 18 | **LIVE_CITY_NOT_WORK_CITY** | Address consistency. |
+| 19 | **AMT_INCOME_TOTAL** | Income amount (weaker than expected, but relevant). |
+| 20 | **FLAG_DOCUMENT_3** | Most common document flag, shows slight signal. |
+
+# 5. Conclusion
+
+1.  **Cleaning was critical:** Fixing the employment days outlier and imputing `EXT_SOURCE_1` were necessary steps to get clean signals.
+2.  **Top Signals:** The "Alternative Data" we need to rely on are primarily the External Source scores (1, 2, and 3).
+3.  **Risk Profile:** The data paints a clear picture: Younger applicants with short employment history and lower education levels represent the highest risk. Older applicants (especially pensioners) with stability are the safest bet. This provides a solid foundation to move into the modeling phase.

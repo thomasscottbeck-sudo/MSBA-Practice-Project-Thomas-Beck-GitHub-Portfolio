@@ -1,0 +1,814 @@
+---
+title: "Home Credit — EDA & Modeling"
+author: "Whitney Bullock · Thomas Beck · Caleb Call"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output:
+  html_document:
+    theme:
+      version: 5
+      bootswatch: cosmo
+      primary: '#0f766e'
+      base_font: Arial
+      heading_font: Arial
+    highlight: zenburn
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: false
+    df_print: paged
+    fig_caption: true
+    code_folding: show
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: false
+    fig_caption: true
+    toc: true
+    toc_depth: 3
+knitr:
+  opts_chunk:
+    echo: true
+    warning: false
+    message: false
+    fig.width: 6
+    fig.height: 4
+    dpi: 120
+    fig.retina: 1
+    dev: png
+    out.width: 80%
+header-includes:
+- \usepackage{fontspec}
+- \setmainfont{Arial}
+- \setsansfont{Arial}
+- \setmonofont{Arial}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,      
+  warning = FALSE,   
+  message = FALSE,   
+  error = FALSE,     
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Business Problem
+
+Home Credit: Predictive Analysis to Identify Loan Repayment-Ready Customers
+
+### Business Problem Statement
+
+Home Credit lends to individuals with limited credit history. To grow responsibly, we need to estimate each applicant’s likelihood of default and use that risk score to guide approve/review decisions. A better risk signal lets us approve more good loans while avoiding bad ones.
+
+### Benefit
+
+The benefits of accurately predicting target customers are as follows:
+
+1. Approve more qualified customers without increasing loss rates.
+2. Reduce exposure to defaults and portfolio volatility.
+3. Expand access to fair credit for underserved but creditworthy applicants.
+
+### Analytics Approach
+
+We will use the Kaggle Home Credit dataset to build supervised learning models that output a risk score (0–1). Models will be evaluated primarily by AUC-ROC (ranking quality across all thresholds), with PR-AUC as a secondary metric due to class imbalance. We will also report thresholded metrics at a simple operating policy (for example, flag the top 10% highest-risk applicants) and show precision, recall, and a confusion matrix at that cut.
+
+Data preparation steps:
+
+* Drop ID columns.
+* Impute missing numeric values with the training median and missing categorical values with the training mode.
+* Collapse rare categories into “Other,” then one-hot encode categorical variables.
+* Remove zero-variance columns.
+* Fit all preprocessing on the training split only, then apply to validation/holdout/test to prevent leakage.
+* Use stratified resampling to preserve the default rate.
+
+**Models compared:**
+
+* Logistic regression (interpretable baseline).
+* Decision tree (simple rules).
+* Random forest (bagged trees).
+* Gradient boosting (expected strongest on tabular data).
+
+The best model by cross-validated AUC will be selected and paired with the chosen operating policy. We are not using a “95% repayment/accuracy” target; with an imbalanced base rate, accuracy is misleading. We optimize AUC first, then choose a threshold that balances business trade-offs.
+
+### Scope and Deliverables
+
+This project will focus on the Kaggle Home Credit datasets only. Deliverables include a reproducible analysis notebook, a concise slide presentation, and a short summary of the recommended operating policy, key features, and a basic monitoring plan.
+
+### Project Details
+
+This project will be executed by Whitney Bullock, Thomas Beck, and Caleb Call (University of Utah MSBA). The target completion date is December 10, 2025.
+
+### Project Milestones
+
+1. Business problem statement
+2. Exploratory data analysis
+3. Modeling (logistic, decision tree, random forest, gradient boosting) with stratified 5-fold cross-validation
+4. Presentation
+5. Final report and monitoring plan
+
+
+
+
+## Installing packages and libraries 
+
+```{r}
+#loading packages and libraries 
+
+packages <- c("tidyverse", "skimr", "DataExplorer", "corrplot", "naniar","caret", "tidymodels","xgboost")
+install.packages(setdiff(packages, rownames(installed.packages())))
+
+
+library(tidyverse)
+library(skimr)
+library(DataExplorer)
+library(corrplot)
+library(naniar)
+library(DataExplorer)
+library(ggplot2)
+library(caret)
+library(tidymodels)
+library(xgboost)
+```
+
+## Loading Data 
+```{r}
+#reading in data from various files  
+
+test <- read.csv(here::here("application_test.csv"))
+train <- read.csv(here::here("application_train.csv"))
+```
+
+## Summary Data
+```{r}
+#general summary data to become familiar with the dataset 
+str(train)
+glimpse(train)
+skim(train)
+```
+
+## Exploratory Data Analysis 
+### Checking for Target Balance 
+
+Target variable explained: Target variable (1 - client with payment difficulties: he/she had late payment more than X days on at least one of the first Y installments of the loan in our sample, 0 - all other cases)
+
+This chart is a visual representation of the client's ability to repay the loan. It is easy to notice a large amount of clients are able to repay the loan. 
+
+In the distribution of the target variable you can quickly identify that 91.92% of clients repay their loan. 
+
+What we want to explore through the data analysis is what key variables can we use to predict customers who will likely be able and follow through with loan re-payment.  Are they married, single, male, female, how old are they, do they live in a house, apartment, own a car, don't own a car.  We want to highlight the perfect client to ensure we are making offers of loans to those who have the highest percentage of repaying the loan.  
+
+
+```{r}
+table(train$TARGET)
+
+prop.table(table(train$TARGET))
+
+ggplot(train, aes(x = factor(TARGET))) +
+  geom_bar(fill = "skyblue") +
+  labs(title = "Distribution of TARGET Variable", x = "TARGET", y = "Count") +
+  theme_minimal()
+```
+
+### Verifying Target Distribution 
+```{r}
+#simple target variable distribution 
+
+target_dist <- prop.table(table(train$TARGET)) * 100
+target_dist
+```
+
+### Explore relationship between Target and Predictors 
+
+The numeric correlations indicating that the normalized external source information is negatively correlated with the target variable.  Additionally, days since birth is positively correlated at 0.078.(remember days are negative values) This suggest that people younger in age may default on the loan.  The same is for days employed, the lower amount of days employed has a negative correlation expecting people with less days of employment to have a higher rate of default. Even the idea of more days since their last phone change could be a good predictor of their ability to repay the loan.  
+
+This loops gives insight to the categories the clients fall into.  90.48% of the clients are requesting cash loans.  Some quick information at a glance is that 65% of requesters are female, 63% indicate they own real estate, 65% state they don't own a car, the majority of the client list are working, on a pension, or a commercial associate. 75% have at least secondary education, 24% have higher education.  Finally, it appears that laborers request the loans at a higher rate, this could be a product of their working schedule fluctuations or inconsistent flow of finances.  
+
+```{r}
+#correlation to identify top predictor variables for loan repayment. 
+
+numeric_cols <- train %>%
+  select(where(is.numeric))
+
+correlations <- sapply(numeric_cols, function(x) cor(x, train$TARGET, use = "complete.obs"))
+
+cor_df <- data.frame(Variable = names(correlations), Correlation = correlations) %>%
+  mutate(Correlation = round(Correlation, 3)) %>%
+  arrange(desc(abs(Correlation)))
+
+head(cor_df, 12)
+```
+
+
+```{r}
+# loop to identify different categorical variable outcomes for loan repayment.  
+
+cat_vars <- names(train)[sapply(train, function(x) is.character(x) | is.factor(x))]
+
+# Loop through each categorical variable
+for (var in cat_vars) {
+  cat("====", var, "====\n")
+  
+  # Create a summary table of counts by TARGET
+  summary_table <- train %>%
+    group_by(.data[[var]], TARGET) %>%
+    summarise(Count = n(), .groups = "drop") %>%
+    mutate(Percent = round(Count / sum(Count) * 100, 2))
+  
+  print(summary_table)
+  cat("\n\n")
+}
+```
+
+## Missing Values 
+
+I first identified which variables were missing information and considered the reasons why information would be missing.  I chose to imput the median value for EXT_SOURCE_1 and then proceeded to remove variables with more than 50% missing values. By imputting a value in EXT_SOURCE_1 it removed it from the list of variables to be removed.   By removing variables that are over 50% incomplete the dataset has been cleaned up and ensures that the remaining variables are more likely to provide useful insights, rather than contributing noise or requiring excessive imputation and computation.
+
+As a result of this cleaning process, the number of variables has been reduced from 123 to 85. The remaining 85 variables each contain responses from at least 50% of participants, making them more reliable for analysis.
+
+```{r}
+# verifying what variables have missing data.  
+
+missing_train <- train %>%
+  summarise(across(everything(), ~ round(mean(is.na(.)), 3))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "MissingRate") %>%
+  arrange(desc(MissingRate))
+
+head(missing_train, 40)
+
+```
+
+```{r}
+# because ext_source_1 was identified as a good predictor for loan repayment, I am choosing to use an imput value for the missing information.  This way the variable will will not be removed when I run the 50% threshold.  
+
+med <- median(train$EXT_SOURCE_1, na.rm = TRUE)
+
+train$export_source_1_imputed <- ifelse(is.na(train$EXT_SOURCE_1),
+                                        med,
+                                        train$EXT_SOURCE_1)
+
+head(train[c("EXT_SOURCE_1", "export_source_1_imputed")])
+```
+
+
+```{r}
+# removing variables that have a large amount of missing values 
+
+threshold <- 0.5
+vars_to_drop <- missing_train %>%
+  filter(MissingRate > threshold) %>%
+  pull(Variable)
+
+train_cleaned <- train %>% select(-all_of(vars_to_drop))
+```
+
+```{r}
+skim(train_cleaned)
+```
+
+## Data Sanity Check 
+
+```{r}
+#summarizing the data to see if the numerical values make senes in the data.  
+
+summary(train_cleaned)
+```
+
+Need to address negative days within variables: DAYS_BIRTH, DAYS_EMPLOYED, DAYS_REGISTRATION, DAYS_ID_PUBLISH
+
+```{r}
+#cleaning the data to make the dates make sense, rather than negative days. 
+
+train_cleaned <- train_cleaned %>%
+  mutate(AGE_YEARS = abs(DAYS_BIRTH) / 365)
+
+train_cleaned <- train_cleaned %>%
+  mutate(YEARS_EMPLOYED = abs(DAYS_EMPLOYED) / 365 )
+
+train_cleaned <- train_cleaned %>%
+  mutate(YEARS_REGISTERED = abs(DAYS_REGISTRATION)/365)
+
+train_cleaned <- train_cleaned %>% 
+  mutate(YEARS_PUBLISH = abs (DAYS_ID_PUBLISH)/365)
+
+```
+
+```{r}
+summary(train_cleaned$AGE_YEARS)
+summary(train_cleaned$YEARS_EMPLOYED)
+summary(train_cleaned$YEARS_REGISTERED)
+summary(train_cleaned$YEARS_PUBLISH)
+```
+
+Years employed has an outlier that we need to locate 
+
+
+```{r}
+train_cleaned <- train_cleaned %>%
+  mutate(DAYS_EMPLOYED = ifelse(DAYS_EMPLOYED == 365243, NA, DAYS_EMPLOYED),
+         YEARS_EMPLOYED = abs(DAYS_EMPLOYED) / 365)
+```
+
+```{r}
+summary(train_cleaned$YEARS_EMPLOYED)
+```
+
+This identifies that of the 307511 applicants in the data 55374 are either unemployed or retired.  18% 
+
+
+### Coorelation after cleaning 
+
+Re-running the correlation of numeric values after cleaning the data to see if any correlations have changed.  This reconfirms that ext. source, age, and years of employment all are good indicators to identify if the client will or will not repay the loan.  
+
+```{r}
+#re-running the coorelation to see if the top list of predictors would change when variables with missing information were removed.  
+
+numeric_cols <- train_cleaned %>%
+  select(where(is.numeric))
+
+correlations <- sapply(numeric_cols, function(x) cor(x, train_cleaned$TARGET, use = "complete.obs"))
+
+cor_df <- data.frame(Variable = names(correlations), Correlation = correlations) %>%
+  mutate(Correlation = round(Correlation, 3)) %>%
+  arrange(desc(abs(Correlation)))
+
+head(cor_df, 12)
+```
+
+## AI 
+
+### AI Prompt and COL names given 
+
+Prompt used (exact)
+
+You are a credit risk analyst. Below are the column names from my dataset. Based only on the meaning of the variables (no data yet), list the top 15–20 variables you think will be most predictive of the binary target TARGET (1 = default/bad, 0 = good). For each chosen variable give one sentence explaining why you expect it to be predictive. Also list any variables you believe are unlikely to be predictive and why. Finally, identify obvious interactions or non-linear relationships that should be considered later in modeling.
+
+Column names:
+SK_ID_CURR, TARGET, NAME_CONTRACT_TYPE, CODE_GENDER, FLAG_OWN_CAR, FLAG_OWN_REALTY, CNT_CHILDREN, AMT_INCOME_TOTAL, AMT_CREDIT, AMT_ANNUITY, AMT_GOODS_PRICE, NAME_TYPE_SUITE, NAME_INCOME_TYPE, NAME_EDUCATION_TYPE, NAME_FAMILY_STATUS, NAME_HOUSING_TYPE, REGION_POPULATION_RELATIVE, DAYS_BIRTH, DAYS_EMPLOYED, DAYS_REGISTRATION, DAYS_ID_PUBLISH, OWN_CAR_AGE, FLAG_MOBIL, FLAG_EMP_PHONE, FLAG_WORK_PHONE, FLAG_CONT_MOBILE, FLAG_PHONE, FLAG_EMAIL, OCCUPATION_TYPE, CNT_FAM_MEMBERS, REGION_RATING_CLIENT, REGION_RATING_CLIENT_W_CITY, WEEKDAY_APPR_PROCESS_START, HOUR_APPR_PROCESS_START, REG_REGION_NOT_LIVE_REGION, REG_REGION_NOT_WORK_REGION, LIVE_REGION_NOT_WORK_REGION, REG_CITY_NOT_LIVE_CITY, REG_CITY_NOT_WORK_CITY, LIVE_CITY_NOT_WORK_CITY, ORGANIZATION_TYPE, EXT_SOURCE_1, EXT_SOURCE_2, EXT_SOURCE_3, APARTMENTS_AVG, BASEMENTAREA_AVG, YEARS_BEGINEXPLUATATION_AVG, YEARS_BUILD_AVG, COMMONAREA_AVG, ELEVATORS_AVG, ENTRANCES_AVG, FLOORSMAX_AVG, FLOORSMIN_AVG, LANDAREA_AVG, LIVINGAPARTMENTS_AVG, LIVINGAREA_AVG, NONLIVINGAPARTMENTS_AVG, NONLIVINGAREA_AVG, APARTMENTS_MODE, BASEMENTAREA_MODE, YEARS_BEGINEXPLUATATION_MODE, YEARS_BUILD_MODE, COMMONAREA_MODE, ELEVATORS_MODE, ENTRANCES_MODE, FLOORSMAX_MODE, FLOORSMIN_MODE, LANDAREA_MODE, LIVINGAPARTMENTS_MODE, LIVINGAREA_MODE, NONLIVINGAPARTMENTS_MODE, NONLIVINGAREA_MODE, APARTMENTS_MEDI, BASEMENTAREA_MEDI, YEARS_BEGINEXPLUATATION_MEDI, YEARS_BUILD_MEDI, COMMONAREA_MEDI, ELEVATORS_MEDI, ENTRANCES_MEDI, FLOORSMAX_MEDI, FLOORSMIN_MEDI, LANDAREA_MEDI, LIVINGAPARTMENTS_MEDI, LIVINGAREA_MEDI, NONLIVINGAPARTMENTS_MEDI, NONLIVINGAREA_MEDI, FONDKAPREMONT_MODE, HOUSETYPE_MODE, TOTALAREA_MODE, WALLSMATERIAL_MODE, EMERGENCYSTATE_MODE, OBS_30_CNT_SOCIAL_CIRCLE, DEF_30_CNT_SOCIAL_CIRCLE, OBS_60_CNT_SOCIAL_CIRCLE, DEF_60_CNT_SOCIAL_CIRCLE, DAYS_LAST_PHONE_CHANGE, FLAG_DOCUMENT_2, FLAG_DOCUMENT_3, FLAG_DOCUMENT_4, FLAG_DOCUMENT_5, FLAG_DOCUMENT_6, FLAG_DOCUMENT_7, FLAG_DOCUMENT_8, FLAG_DOCUMENT_9, FLAG_DOCUMENT_10, FLAG_DOCUMENT_11, FLAG_DOCUMENT_12, FLAG_DOCUMENT_13, FLAG_DOCUMENT_14, FLAG_DOCUMENT_15, FLAG_DOCUMENT_16, FLAG_DOCUMENT_17, FLAG_DOCUMENT_18, FLAG_DOCUMENT_19, FLAG_DOCUMENT_20, FLAG_DOCUMENT_21, AMT_REQ_CREDIT_BUREAU_HOUR, AMT_REQ_CREDIT_BUREAU_DAY, AMT_REQ_CREDIT_BUREAU_WEEK, AMT_REQ_CREDIT_BUREAU_MON, AMT_REQ_CREDIT_BUREAU_QRT, AMT_REQ_CREDIT_BUREAU_YEAR
+
+### AI response 
+
+AI response (semantic ranking — top 20 variables with short reasoning)
+
+EXT_SOURCE_3 — external credit-scoring features are usually highly predictive because they synthesize credit bureau/third-party signals about borrower risk.
+
+EXT_SOURCE_2 — an additional external score often provides complementary predictive information to EXT_SOURCE_3.
+
+EXT_SOURCE_1 — another external score; together the three EXT_SOURCE variables commonly dominate predictive power.
+
+DAYS_BIRTH — borrower age (days) correlates with experience, income stability and default behavior (often non-linear).
+
+AMT_CREDIT — loan amount is directly related to repayment burden and default probability (higher credit often higher risk ceteris paribus).
+
+AMT_INCOME_TOTAL — household income is fundamental to repayment capacity and moderates other financial ratios.
+
+AMT_ANNUITY — monthly/annual payment size relative to income indicates stress; high annuity-to-income increases default risk.
+
+AMT_GOODS_PRICE — loan purpose/size proxy; when large relative to income it raises risk.
+
+DAYS_EMPLOYED — employment tenure (and special sentinel values) captures job stability; short/irregular employment increases risk.
+
+CNT_CHILDREN — dependents increase household obligations and can reduce repayment capacity.
+
+CNT_FAM_MEMBERS — household size changes per-capita income dynamics and consumption burden.
+
+NAME_INCOME_TYPE — income source (pension, state, working, business) strongly affects stability and default propensity.
+
+NAME_EDUCATION_TYPE — education proxies for earning capacity and financial literacy, correlating with risk.
+
+NAME_HOUSING_TYPE — housing status (own, mortgage, rent) proxies wealth/stability and collateral availability.
+
+OCCUPATION_TYPE — job category captures industry/role risk and stability (e.g., seasonal work).
+
+DAYS_ID_PUBLISH — recency of identity issuance may capture recency of life events / identity stability and sometimes correlates with fraud/risk.
+
+REGION_RATING_CLIENT / REGION_RATING_CLIENT_W_CITY — regional socio-economic indicators capture local unemployment/credit environment (either one if choose).
+
+OBS_60_CNT_SOCIAL_CIRCLE — observations in social circle may indicate social-financial exposures; high observation counts can be informative of shared risk.
+
+DEF_60_CNT_SOCIAL_CIRCLE — defaults observed in social circle are plausible contagion indicators of risk.
+
+AMT_REQ_CREDIT_BUREAU_YEAR (also MON/QRT/WEEK) — recent credit inquiries reflect active credit shopping and short-term credit stress; year aggregate is often most informative.
+
+Note: I focused on variables that (by domain knowledge) capture borrower ability to pay, historical credit signals, external bureau scores, and household obligations.
+
+Variables likely to be weak or require special handling
+
+SK_ID_CURR — identifier only, no predictive content (drop or use for joins).
+
+FLAG_MOBIL / many FLAG_DOCUMENT_ fields* — these are often almost-constant (e.g., FLAG_MOBIL = 1 for most) and have low variance; include only if their distribution shows signal.
+
+WEEKDAY_APPR_PROCESS_START / HOUR_APPR_PROCESS_START — could be spurious unless application-time correlates with channel/fraud; usually weak.
+
+Highly aggregated census-style *_MODE, *_MEDI, *_AVG — could be useful, but many are derived from applicant’s neighborhood and can be redundant with REGION_*; treat carefully.
+
+BASEMENTAREA_ / COMMONAREA_ etc.** — building-level averages may be noisy or frequently missing; predictive only if well-populated and aligned with applicant address.
+
+FLAG_EMAIL / FLAG_PHONE — if nearly all are 1/0 they carry little info; but missingness patterns might be informative.
+
+Suggested interactions & non-linearities to consider
+
+Annuity / Income interaction: AMT_ANNUITY / AMT_INCOME_TOTAL (annuity-to-income ratio) — expected strong non-linear effect.
+
+Credit / Income / Age triad: AMT_CREDIT × AMT_INCOME_TOTAL × DAYS_BIRTH — same loan may be riskier for younger/low-income customers.
+
+EXT_SOURCEs combined: non-linear combination or monotonic binning of EXT_SOURCE_1/2/3 often beats single-score use.
+
+Employment & Income Type: DAYS_EMPLOYED × NAME_INCOME_TYPE — short employment may be more severe for wage-earners than for pensioners.
+
+Region × Housing: REGION_RATING_CLIENT × NAME_HOUSING_TYPE — regional economic conditions interact with housing tenure to change risk.
+
+Counts extreme effects: CNT_CHILDREN, CNT_FAM_MEMBERS may show non-linear (both 0 and very large values could behave differently); consider binning.
+
+Brief critique of the AI (this response) reasoning — strengths & limits
+
+Strengths
+
+Pulls from established credit-risk domain logic: ability-to-pay (income, annuity), historical risk (EXT_SOURCEs, observed defaults), and stability signals (age, employment, housing).
+
+Suggests both point variables and interactions (ratios and cross-terms) that are commonly important in credit models.
+
+Avoids obvious traps (IDs, near-constant flags) and flags census/aggregate fields for careful handling.
+
+Weaknesses / What this semantic pass cannot do
+
+No empirical signal quantification: variable rankings are hypothetical — we don’t know effect sizes, distributions, missingness, outliers, or multicollinearity until we inspect the data.
+
+Potential redundancy: several suggested variables are correlated (e.g., AMT_CREDIT vs AMT_GOODS_PRICE; EXT_SOURCEs among themselves); the semantic list does not resolve redundancy.
+
+Data quirks not captured: special sentinel values (e.g., DAYS_EMPLOYED = 365243 used in some datasets) or heavy missingness could invert the expected importance.
+
+Proxy leakage risk: some fields (application processing metadata, organization type, or recently added bureau fields) can leak label information if TARGET was collected in overlapping time windows — a data-timeline check is needed.
+
+Practical next steps (what I recommend you do now)
+
+Run the statistical path: compute univariate separation (box/density plots), AUC/KS, and counts by category for the variables above — this will confirm which of the semantic picks actually carry signal.
+
+Check missingness & sentinel values: calculate % missing and look for sentinel constants (e.g., DAYS_EMPLOYED flagged as special).
+
+Create derived features: annuity-to-income, credit-to-income, age in years, employment-length-in-years, binned EXT_SOURCE scores, etc.
+
+Check multicollinearity: correlation matrix + VIF among the top candidate features, then prune or combine redundant ones.
+
+Fit a quick regularized model and tree-based model (L1-logistic, random forest or XGBoost) and examine coefficients / SHAP to confirm feature importance and interactions.
+
+If you want, I can immediately (a) run the semantic prompt again but include short descriptions for any columns you want to emphasize, or (b) proceed to the data-informed statistical exploration — just upload data.csv (with TARGET) and I’ll run the analyses (plots, AUCs, ranked list) and return the visual report and a CSV of ranked features. Which would you like next?
+
+### My response to the AI generation 
+
+The AI identified very similar predictors as I had identified in my EDA.  Both the AI any myself through EDA identified external sources as being strong predictors of the client's ability to repay the loan.   Both AI and myself also highlighted the idea that age would be a good predictor of a persons ability to repay.  The AI highlighted a predictor of AMT_CREDIT as a good predictor, which did not come through in my EDA as a possible predictor. Other variables that the AI chose to focus on was the borrowers credit score and their total income.  The AI believes if the client has more money, they are likely to be able to repay the loan. Through my EDA the city was highlighted as a potential predictor as well as the days since last phone change; neither of these were listed in the AI generated list. It is very interesting to see the balance between both my EDA and the AI generated list.  By using actual data more insightful conclusions can be drawn out of the data.  
+
+
+## Venn Diagram 
+
+```{r}
+#drawing a venn diagram to compare what the AI thought would be good predictors and what the data actually identified as predictors. 
+
+library(VennDiagram)
+
+AI_Predictor_Variables <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "DAYS_BIRTH", "AMT_CREDIT", "AMT_INCOME_TOTAL")
+Data_Predictor_Variables <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "DAYS-BIRTH", "DAYS_EMPLOYED", "REGION_RATING_CLIENT_W_CITY")
+
+venn.plot <- venn.diagram(
+  x = list(
+    "AI-Predictors" = AI_Predictor_Variables,
+    "Data-Predictors" = Data_Predictor_Variables
+  ),
+  filename = NULL,
+  fill = c("skyblue", "lightgreen"),
+  alpha = 0.5,
+  cex = 1.5,
+  cat.cex = 1.2
+)
+
+grid::grid.draw(venn.plot)
+
+```
+
+
+## EDA Results 
+
+Through my exploratory data analysis (EDA) of home-credit, I have identified some promising predictor variables for preferred client profiles. External sources were highlighted in both my EDA and the AI generated list as being really good predictors to identify clients and their ability to repay the loan as agreed.  When supplying the model with actual data, I was able to gain further insight that age, days employed, and days since last phone change could be used to more accurately predict who Home Credit should enter into loan contracts with. I believe the more time utilized during the EDA process helps to draw out more meaningful connections and understanding of the data.  It also helps the user to identify more nuanced data and learn more about what type of clients Home Credit's core customer base is. Through EDA I am able to paint a picture of each user and how Home Credit is helping fund their dreams, day to day lives, and future plans.  
+
+
+## Model Analysis 
+
+To start Model analysis it has been established that the current benchmark for Home Credit accuracy is 91.92% clients receiving a loan and successfully completing repayment, while 8.07% clients default on their repayment.   Through model analysis and variable tuning the goal is to achieve 94% successful client repayment.  
+
+For modeling analyses we will use 4 types of models: logistic, tree model, random forest and gradient boosting. In some models you will see a 70:30 data partition split into training and test data. This is a very important step to withhold some of the data to be able to test our predictions once the model in question has been trained.  
+
+### Logistic Regression Model 
+
+The first model I will be testing is a simple logistic regression model with previously identified  predictors: EXT_SOURCE_3, EXT_SOURCE_2, EXPORT_SOURCES_1_IMPUTED, AGE_YEAR, YEARS_EMPLOYED.  The log regression model will help to confirm if the selected variables are considered to be statistically significant and their impact on the target.  
+
+
+```{r}
+#setting seed so data is repeatable 
+
+set.seed(1234)
+# Split into training (70%) and testing (30%)
+train_index <- sample(1:nrow(train_cleaned), 0.7 * nrow(train_cleaned))
+train_data <- train_cleaned[train_index, ]
+test_data <- train_cleaned[-train_index, ]
+```
+
+```{r}
+#logistics regression model using pre-identified variables as being potential predictors to identify customers who potentially will default on loan repayment.  
+
+log_model1 <- glm(train_data$TARGET ~ train_data$EXT_SOURCE_3 + train_data$EXT_SOURCE_2 + train_data$export_source_1_imputed + train_data$AGE_YEARS + train_data$YEARS_EMPLOYED, data = train_data)
+summary(log_model1)
+
+exp(coef(log_model1))
+
+log_model2 <- glm(train_data$TARGET ~ train_data$CODE_GENDER, data = train_data)
+summary(log_model2)
+
+exp(coef(log_model2))
+
+log_model3 <- glm(train_data$TARGET ~ train_data$AMT_INCOME_TOTAL, data = train_data)
+summary(log_model3)
+```
+
+```{r}
+#predictor models 
+predictors_model1 <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed", 
+                       "AGE_YEARS", "YEARS_EMPLOYED")
+predictors_model2 <- "CODE_GENDER"
+predictors_model3 <- "AMT_INCOME_TOTAL"
+
+library(pROC)
+
+validate_model <- function(model, test_data, predictors) {
+  test_data_clean <- test_data[complete.cases(test_data[, predictors]), ]
+  preds <- predict(model, newdata = test_data_clean, type = "response")
+  test_data_clean$TARGET <- as.numeric(as.character(test_data_clean$TARGET))
+  roc_obj <- roc(test_data_clean$TARGET, preds)
+  auc_val <- auc(roc_obj)
+  return(list(roc = roc_obj, auc = auc_val, n = nrow(test_data_clean)))
+}
+
+log_model1 <- glm(TARGET ~ EXT_SOURCE_3 + EXT_SOURCE_2 + export_source_1_imputed +
+                  AGE_YEARS + YEARS_EMPLOYED, data = train_data, family = binomial)
+
+log_model2 <- glm(TARGET ~ CODE_GENDER, data = train_data, family = binomial)
+
+log_model3 <- glm(TARGET ~ AMT_INCOME_TOTAL, data = train_data, family = binomial)
+
+result1 <- validate_model(log_model1, test_data, predictors_model1)
+result2 <- validate_model(log_model2, test_data, predictors_model2)
+result3 <- validate_model(log_model3, test_data, predictors_model3)
+
+result1$auc
+result2$auc
+result3$auc
+
+plot(result1$roc, col = "blue", main = "ROC Curves for Logistic Models")
+plot(result2$roc, col = "red", add = TRUE)
+plot(result3$roc, col = "green", add = TRUE)
+legend("bottomright", legend = c("Model 1: EXT_SOURCE & Age/Employment", 
+                                 "Model 2: CODE_GENDER", 
+                                 "Model 3: AMT_INCOME_TOTAL"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+```
+
+
+### Logistic Regression Model Analysis 
+
+In Model 1, all variables are highly statistically significant. In particular, higher external credit scores are strongly associated with a lower probability of loan default, while employment status and age have smaller but still meaningful effects. When examining gender alone, the model yields an AUC only slightly above 0.5, indicating that gender by itself provides almost no predictive power for loan default. Similarly, a model based solely on income also produces an AUC barely above random chance. Overall, these results suggest that while certain predictors such as external credit scores are highly informative, individual characteristics like gender or income are insufficient on their own to predict default.
+
+### Decision Tree Model  
+
+Because we have labeled data, I will use a supervised machine learning decision tree algorithm, to model the relationship between the features Home Credit has values for and our target variable. I have chosen to try a decision tree model because it can handle my variables both numeric and categorical.  It also is not influenced by outliers. 
+
+For the decision tree I need to adjust for target imbalance to ensure the model effectively identifies defaulters, preventing bias toward the majority class.  For this model I have chosen a set value of 5x for the defaulters to better learn from them.  
+
+```{r}
+library(rpart)
+library(rpart.plot)
+```
+
+```{r}
+
+
+class_weights <- ifelse(train_data$TARGET == 1, 5, 1) 
+
+tree_model <- rpart(TARGET ~ EXT_SOURCE_3 + EXT_SOURCE_2 + export_source_1_imputed +
+                    AGE_YEARS + YEARS_EMPLOYED,
+                    data = train_data,
+                    method = "class",
+                    weights = class_weights,
+                    control = rpart.control(minsplit = 20, cp = 0.001))
+rpart.plot(tree_model, type = 2, extra = 104, fallen.leaves = TRUE, cex = 0.7)
+tree_model
+```
+
+
+```{r}
+predictors <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed",
+                "AGE_YEARS", "YEARS_EMPLOYED")
+
+test_data_clean <- test_data[complete.cases(test_data[, predictors]), ]
+
+tree_probs <- predict(tree_model, newdata = test_data_clean, type = "prob")[,2]
+tree_class <- ifelse(tree_probs >= 0.5, 1, 0)
+
+roc_tree <- roc(test_data_clean$TARGET, tree_probs)
+auc_val <- auc(roc_tree)
+print(paste("AUC:", round(auc_val, 4)))
+
+plot(roc_tree, main = "ROC Curve for Weighted Decision Tree")
+```
+
+
+### Decision Tree Model Analysis 
+With the weighted values assigned to the minority class I achieved a AUC of .6853.  The predictive performance was lower in the decision tree model. That said, there is still very useful information obtained from the model.  In particular it can identify key characteristics to use for identifying high-risk segments such as low external source values, perhaps allowing for automatic rejection values to speed the approval and denial process for Home Credit. 
+
+### Random Forest Model
+
+We will now utilize multiple decision trees through random forests to see if we can improve our models predictions ability. This will reduce over fitting that may have occurred with a single tree by averaging predictions over many trees. This will also reduce the variance that we see. The potential downside of random forest is that it is very difficult to interpret since there are many trees, so we won't know very well what variables contribute to a good prediction.
+
+```{r}
+library(randomForest)
+library(pROC)
+library(ranger)
+```
+
+```{r}
+set.seed(1234)  
+
+# Define predictors
+predictors <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed",
+                "AGE_YEARS", "YEARS_EMPLOYED")
+
+# Build Random Forest model
+rf_model <- ranger(
+  formula = as.formula(paste("TARGET ~", paste(predictors, collapse = "+"))),
+  data = train_data,
+  num.trees = 500,
+  mtry = 3,
+  importance = "impurity",
+  probability = TRUE
+)
+
+# Predict on test data
+rf_pred <- predict(rf_model, data = test_data, type = "response")
+rf_probs <- rf_pred$predictions[, 2]  # fix: take second column
+
+# Evaluate AUC
+roc_obj <- roc(test_data$TARGET, rf_probs)
+auc_val <- auc(roc_obj)
+print(paste("Random Forest AUC:", round(auc_val, 3)))
+
+# Plot ROC curve
+plot(roc_obj, col = "blue", main = "ROC Curve - Random Forest (AUC: 0.651)")
+
+
+```
+
+### Random Forest Model Analysis 
+Using 500 trees to create a random forest I achieved an AUC of .65.  The predictive performance was worse than the tree model which we did not expect. This is likely due to the fact that we didn't weight the minority class. This is still not an incredibly strong predictor unfortunately. The ability to understand this model is also difficult since it is averaging predictions from 500 different trees. We will next explore 1 more model through a gradient boosting model.
+
+### Gradient Boosting Model
+
+Unlike Random Forest which builds trees independently, gradient boosting builds upon previous trees that were created. Each new tree will try to correct the errors of the previous tree. This should lead to improved AUC. This model will focus more on those customers who are difficult to understand. Which in this case should be very beneficial to understand who might default.
+
+```{r}
+library(xgboost)
+```
+
+
+```{r}
+set.seed(1234)
+
+#  Separate predictors and target
+predictors <- setdiff(names(train_data), "TARGET")
+
+# Keep only complete cases
+train_complete <- train_data[, c(predictors, "TARGET")]
+train_complete <- na.omit(train_complete)
+
+test_complete <- test_data[, c(predictors, "TARGET")]
+test_complete <- na.omit(test_complete)
+
+# Combine train and test to create consistent dummy variables
+combined <- rbind(train_complete[, predictors], test_complete[, predictors])
+combined_matrix <- model.matrix(~ . -1, data = combined)
+
+# Split back into train/test matrices
+train_matrix <- combined_matrix[1:nrow(train_complete), ]
+test_matrix  <- combined_matrix[(nrow(train_complete)+1):nrow(combined_matrix), ]
+
+#  Convert TARGET to numeric (0/1)
+train_labels_num <- ifelse(train_complete$TARGET == "1", 1, 0)
+test_labels_num  <- ifelse(test_complete$TARGET  == "1", 1, 0)
+
+# Handle class imbalance
+neg <- sum(train_labels_num == 0)
+pos <- sum(train_labels_num == 1)
+scale_pos_weight <- neg / pos
+
+# Create XGBoost DMatrix
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_labels_num)
+dtest  <- xgb.DMatrix(data = test_matrix,  label = test_labels_num)
+
+# Set parameters
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  eta = 0.1,
+  max_depth = 6,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  scale_pos_weight = scale_pos_weight
+)
+
+# Train XGBoost model
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 500,
+  watchlist = list(train = dtrain, test = dtest),
+  print_every_n = 50,
+  early_stopping_rounds = 20
+)
+
+# Predict
+xgb_probs <- predict(xgb_model, dtest)
+
+# Evaluate AUC
+library(pROC)
+roc_obj <- roc(test_labels_num, xgb_probs)
+auc_value <- auc(roc_obj)
+print(paste("Gradient Boosting Test AUC:", round(auc_value, 3)))
+
+# Plot ROC
+plot(roc_obj, col = "blue", main = "ROC Curve - Gradient Boosting (AUC: 0.742)")
+
+```
+
+### Gradient Boosting Model Analysis
+
+The test AUC for this model was .74, which is almost a big increase from the random forest design. This is a good improvement and what we expected to occur given that it will be correcting for errors made as it goes. We still used 500 trees as well. We increased the AUC by .05 from the singular tree model that we previously made as well. This model beats out the AUC scores for all the log models that we created as well. 
+
+### Kaggle Submission
+
+```{r}
+# Add variables to the official Kaggle test set
+test$AGE_YEARS      <- -test$DAYS_BIRTH / 365
+test$YEARS_EMPLOYED <- -test$DAYS_EMPLOYED / 365
+test$export_source_1_imputed <- test$EXT_SOURCE_1
+
+# Predictors used by the trained XGBoost model (order matters)
+predictors <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed",
+                "AGE_YEARS", "YEARS_EMPLOYED")
+
+# Impute missing numeric values in test using *training* medians
+# (train_data -> train, which already exists in the notebook)
+test_imputed <- test
+for (col in predictors) {
+  if (is.numeric(test_imputed[[col]])) {
+    med_val <- median(train[[col]], na.rm = TRUE)   # << minimal fix: use 'train'
+    test_imputed[[col]][is.na(test_imputed[[col]])] <- med_val
+  }
+}
+
+# ---- Minimal alignment to the model's feature set ----
+feat <- if (!is.null(xgb_model$feature_names)) xgb_model$feature_names else predictors
+# add any missing columns as zeros, drop extras, enforce order
+missing <- setdiff(feat, colnames(test_imputed))
+if (length(missing)) for (m in missing) test_imputed[[m]] <- 0
+test_imputed <- test_imputed[, feat, drop = FALSE]
+
+# Create DMatrix for XGBoost
+test_matrix <- xgb.DMatrix(as.matrix(test_imputed))
+
+# Predict probabilities with your trained XGBoost model
+xgb_probs <- predict(xgb_model, test_matrix)
+
+# Build the Kaggle submission file
+submission <- data.frame(
+  SK_ID_CURR = test$SK_ID_CURR,
+  TARGET = xgb_probs
+)
+
+# Write the submission CSV
+write.csv(submission, "kaggle_xgb_submission.csv", row.names = FALSE)
+
+# Sanity checks
+cat("Submission rows:", nrow(submission), "\n")
+head(submission)
+summary(submission$TARGET)
+
+```
+
+The Private score we got was an AUC of .70126 and the public score was an AUC of .70297 when we submitted to the kaggle competition.
+
+## Conclusion 
+
+Key insights identified through my analysis is that extneral credit scores are the most powerful predictors for loan default risk.  The higher the score, the lower the probability of loan default.  Age and employment duration have smaller but meaningful contributions.  My analysis suggests that older, more experienced customers are slightly less likely to default on the loan. Individual characteristics like gender and income when analyzed in isolation have unreliable predictive power, no better than a 50/50 coin flip.  
+
+The log model with more variables showed decent performance for predictive accuracy.  The weighted tree performed slightly below the log model1, but did provide valuable insights in terms of class recognition. The random forest model improved the tree model by averaging predictions for 500 different trees, but still underperformed the log model. The model that gave us the best AUC score was the gradient boosting model which is similar to the random forest model but instead improves upon the errors of the previous trees.
+
+My recommendation would be to use the gradient boosting model that achieved the highest AUC, which performed quite a bit better than the single tree model or random forest. The accuracy may be lower for this model than using the majority class predictor which produces 92% accuracy of default. The gradient model however provides meaningful predictive power for the minority class, those who will default. We want to get a better understanding of who will default and that is why we suggest using gradient boosting. We hope this model will be able to help Home Credit better target high-risk customers while improving overall approval efficiency.  
