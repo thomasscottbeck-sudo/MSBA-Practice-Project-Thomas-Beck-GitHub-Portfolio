@@ -59,7 +59,32 @@ I replaced ad-hoc testing with a systematic comparison of four architectures to 
 
 ---
 
-## 4. Final Solution: The Top-Decile Strategy
+## 4. Difficulties Encountered
+
+### **1. The "Frankenstein" Codebase**
+**Challenge:** Inheriting a project in mid-flight meant dealing with conflicting variable names, hard-coded file paths (e.g., `C:/Users/Name...`), and mixed coding styles (Base R vs. Tidyverse).
+**Solution:** I implemented the `here` package to abstract file paths, ensuring the code could run on any machine. I also created a unified data dictionary to resolve variable conflicts.
+
+### **2. Parallel Processing vs. Reproducibility**
+**Challenge:** While implementing `doParallel` sped up model iteration significantly, it introduced instability when knitting the final reports. Race conditions occasionally caused chunks to fail or output disordered logs.
+**Solution:** I learned to toggle between multi-core processing for training (speed) and single-core execution for final rendering (stability). This hybrid approach saved hours of compute time while ensuring the final report was error-free.
+
+### **3. The Accuracy Trap**
+**Challenge:** Early models showed 92% accuracy but failed to predict defaults. The severe class imbalance masked the model's inability to learn the minority class.
+**Solution:** We pivoted entirely to **AUC-ROC** as our north star metric. This forced us to abandon simple decision trees (which prioritized the majority class) in favor of Gradient Boosting, which could be tuned to penalize false negatives more heavily.
+
+---
+
+## 5. What I Learned
+
+* **Professional Notebook Architecture:** I mastered the **Quarto** framework to transform raw code into executive-ready HTML reports. Learning to control code folding, CSS styling, and tabsets was essential for creating a portfolio that looks as good as the code runs.
+* **GitHub & Version Control:** This project moved me beyond basic "commit/push" workflows. I learned to manage branches, resolve merge conflicts, and use **GitHub Pages** to host a live, interactive data science portfolio.
+* **The Power of "Negative Results":** My failed Python Neural Network experiment (File 02) taught me that more complexity doesn't always mean better performance. Documenting this failure was just as valuable as the success of the XGBoost model because it scientifically justified our architectural choices.
+* **Compute Optimization:** I gained a deep appreciation for hardware resource management. Learning to detect logical cores and assign parallel backends allowed me to train complex Random Forest ensembles in minutes rather than hours.
+
+---
+
+## 6. Final Solution: The Top-Decile Strategy
 The final XGBoost model (File 06) is not just a predictor; it is a decision engine.
 
 * **Strategy:** Automated approval for the bottom 90% of risk scores. Manual review for the top 10%.
@@ -67,7 +92,7 @@ The final XGBoost model (File 06) is not just a predictor; it is a decision engi
 
 ---
 
-## 5. Technical Stack
+## 7. Technical Stack
 * **Core:** R (Quarto), Python (Jupyter).
 * **Modeling:** `tidymodels`, `xgboost`, `caret`, `scikit-learn`, `ranger`.
 * **Data Ops:** `tidyverse`, `here`, `doParallel` (CPU Optimization).
