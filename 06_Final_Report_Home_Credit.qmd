@@ -1,0 +1,753 @@
+---
+title: "Home Credit — EDA & Modeling"
+author: "Whitney Bullock · Thomas Beck · Caleb Call"
+date: "November 19, 2025"
+format:
+  html:
+    embed-resources: true
+    theme: flatly
+    highlight-style: tango
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: false
+    df-print: paged
+    code-fold: show
+    code-tools: true
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+# -----------------------------------------------------------------------------
+# Setup and set global chunk options
+# -----------------------------------------------------------------------------
+knitr::opts_chunk$set(
+  echo = FALSE,         
+  warning = FALSE,      
+  message = FALSE,       
+  error = FALSE,        
+  fig.align = "center",
+  fig.width = 12,        
+  fig.height = 8,        
+  dpi = 300,
+  out.width = '100%'    
+)
+
+# Global Reproducibility Options
+set.seed(1234)
+options(dplyr.summarise.inform = FALSE, pillar.sigfig = 3, scipen = 999)
+
+# Prevent "Hit <Return> to see next plot"
+options(device.ask.default = FALSE)
+```
+
+```{r libraries, include=TRUE, results='asis'}
+# -----------------------------------------------------------------------------
+# Library Management
+# -----------------------------------------------------------------------------
+
+# Required packages
+required_libraries <- c(
+  "tidyverse", "skimr", "DataExplorer", "corrplot", "naniar",
+  "caret", "tidymodels", "xgboost", "kableExtra", "Matrix",
+  "VennDiagram", "grid", "rpart", "rpart.plot", "pROC",
+  "randomForest", "ranger", "knitr", "broom", "foreach", 
+  "parallel", "scales", "Ckmeans.1d.dp"
+)
+
+# Install missing packages automatically
+missing_pkgs <- setdiff(required_libraries, rownames(installed.packages()))
+if (length(missing_pkgs) > 0) {
+  install.packages(missing_pkgs, quiet = TRUE)
+}
+
+# Load all libraries
+invisible(lapply(required_libraries, library, character.only = TRUE))
+
+# Print loaded libraries for reproducibility record
+cat("**Loaded Libraries:**\n\n")
+cat(paste0("[", paste(required_libraries, collapse = ", "), "]"))
+```
+
+```{r configuration, include=FALSE}
+# -----------------------------------------------------------------------------
+# Configuration & Helpers
+# -----------------------------------------------------------------------------
+
+# 1. Hardware Optimization Toggle
+# TRUE = Fast (Parallel) - Use for checking for errors
+# FALSE = Reproducible (Single Thread) - Use for final knitting/submission
+ENABLE_PARALLEL <- TRUE 
+
+if (ENABLE_PARALLEL) {
+  if (!require("doParallel")) install.packages("doParallel")
+  library(doParallel)
+  
+  # Detect available cores
+  detected_cores <- parallel::detectCores(logical = FALSE)
+  # Use all physical cores but keep one free for the OS
+  # We assign this to 'all_cores' so downstream models use it automatically
+  all_cores <- ifelse(detected_cores > 1, detected_cores - 1, 1)
+  
+  registerDoParallel(cores = all_cores)
+  message(paste0("Parallel processing enabled with ", all_cores, " cores."))
+  
+} else {
+  # Force sequential processing for absolute reproducibility
+  if (!require("foreach")) install.packages("foreach")
+  foreach::registerDoSEQ()
+  
+  # CRITICAL: Set 'all_cores' to 1. 
+  # This forces ranger and xgboost to run single-threaded, ensuring 
+  # the random seed (1234) produces identical numbers every time.
+  all_cores <- 1
+  
+  message("Sequential processing enabled for reproducibility.")
+}
+
+# 2. Visualization Settings
+par(ask = FALSE)
+theme_set(theme_minimal(base_family = "sans"))
+
+# 3. Outputs & Figures Directory
+if (!dir.exists("outputs")) dir.create("outputs")
+if (!dir.exists("fig")) dir.create("fig")
+
+# 4. Color Palette 
+col_good    <- "steelblue"    # Low Risk / Repaid
+col_bad     <- "firebrick"    # High Risk / Default
+col_neutral <- "lightgrey"    # Neutral
+col_line1   <- "darkorange"   # Model 1 Line
+col_line2   <- "forestgreen"  # Model 2 Line
+col_line3   <- "purple"       # Model 3 Line
+
+# 5. Table Formatting
+print_kbl <- function(data, caption = "Table Output") {
+  data %>%
+    head(10) %>%
+    knitr::kable(digits = 3, caption = caption, booktabs = TRUE, 
+                 format.args = list(big.mark = ",")) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+    row_spec(0, bold = TRUE, color = "white", background = "#2c3e50")
+}
+
+# 6. Tree Plot Formatting
+plot_professional_tree <- function(model) {
+  rpart.plot::rpart.plot(
+    model,
+    type = 0,             
+    extra = 104,              
+    under = TRUE,             
+    fallen.leaves = TRUE,     
+    box.palette = "BuOr",   
+    varlen = 0,               
+    faclen = 0,          
+    roundint = FALSE,         
+    digits = 2,               
+    tweak = 1.1,              
+    clip.right.labs = FALSE,  
+    branch.lty = 1,           
+    shadow.col = 0,        
+    main = "Decision Rules for Default Risk Prediction"
+  )
+}
+```
+
+
+
+# Business Problem
+
+Home Credit’s operational model is fundamentally about financial inclusion. Loans are provided to populations with little or no credit history—groups often rejected by traditional banks. This creates a risk assessment challenge: evaluating repayment likelihood without standard credit scores.
+
+The core issue is information asymmetry. Strict approval criteria exclude creditworthy applicants, failing the corporate mission. Lenient criteria result in financial losses from defaults.
+
+The goal is not merely prediction accuracy, as only 8% of the population defaults. A basic model could achieve 92% accuracy simply by approving every applicant, but this fails to manage risk. Instead, applicants must be ranked by default likelihood using AUC-ROC. This approach identifies specific "invisible risk" cases for further review.
+
+# Methodology
+
+The standard CRISP-DM framework structures the analysis:
+
+-   **Data Preparation:** Missing data is handled (imputing `EXT_SOURCE_1` with the median), empty columns are removed, and features are engineered to capture age and employment length in years.
+-   **Exploratory Data Analysis (EDA):** The 92/8 class imbalance is verified, and external credit scores are identified as the strongest predictors.
+-   **Modeling:** A progression of models is built, beginning with Logistic Regression for a baseline, moving to Decision Trees for interpretability, and finally using Random Forest and XGBoost for maximum predictive power.
+-   **Evaluation:** AUC-ROC is the primary metric used to select the champion model for risk ranking.
+
+# Data Preparation & Feature Engineering
+
+The raw data is imported and a summary of dataset dimensions is generated.
+
+```{r data_import}
+# Load Datasets
+train <- read.csv("application_train.csv", check.names = FALSE)
+test  <- read.csv("application_test.csv",  check.names = FALSE)
+
+# Output Dimensions
+tibble(
+  dataset = c("train", "test"),
+  n_rows  = c(nrow(train), nrow(test)),
+  n_cols  = c(ncol(train), ncol(test))
+) %>% print_kbl(caption = "Dataset Dimensions")
+```
+
+Missing values for `EXT_SOURCE_1` are filled using the median to preserve signal, and columns with greater than 50% missingness are dropped.
+
+```{r missing_imputation}
+# Impute missing EXT_SOURCE_1
+med <- median(train$EXT_SOURCE_1, na.rm = TRUE)
+train$export_source_1_imputed <- ifelse(is.na(train$EXT_SOURCE_1), med, train$EXT_SOURCE_1)
+
+# Drop high-missingness cols
+missing_rate <- train |> 
+  summarise(across(everything(), ~ mean(is.na(.)))) |> 
+  pivot_longer(everything(), names_to = "var", values_to = "rate")
+vars_to_drop <- missing_rate |> filter(rate > 0.5) |> pull(var)
+train_cleaned <- train |> select(-all_of(vars_to_drop))
+```
+
+Data inconsistencies are corrected, such as converting negative days to positive years and fixing a sentinel value in the employment data.
+
+```{r feature_engineering}
+# feature engineering
+train_cleaned <- train_cleaned |>
+  mutate(
+    TARGET = as.factor(TARGET), 
+    AGE_YEARS = abs(DAYS_BIRTH) / 365,
+    DAYS_EMPLOYED_FIXED = ifelse(DAYS_EMPLOYED == 365243, NA, DAYS_EMPLOYED),
+    YEARS_EMPLOYED = abs(DAYS_EMPLOYED_FIXED) / 365,
+    YEARS_REGISTERED = abs(DAYS_REGISTRATION) / 365,
+    YEARS_PUBLISH = abs (DAYS_ID_PUBLISH) / 365
+  )
+```
+
+# Exploratory Data Analysis
+
+## Target Distribution
+
+```{r target_distribution}
+# Calc target dist
+tb_target <- train_cleaned |> 
+  count(TARGET, name = "count") |>
+  mutate(
+    class = recode(TARGET, `0` = "Repaid (0)", `1` = "Default (1)"),
+    pct   = count / sum(count)
+  ) |>
+  select(class, count, pct)
+
+tb_target %>% print_kbl(caption = "Target Distribution")
+
+# Plot Target Distribution
+ggplot(tb_target, aes(x = class, y = pct, fill = class)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = sprintf("%.1f%%", 100 * pct)), vjust = -0.6, size = 4, fontface = "bold", color = "white") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), labels = scales::percent) +
+  scale_fill_manual(values = c("Default (1)" = col_bad, "Repaid (0)" = col_good), guide = "none") + 
+  labs(title = "Distribution of Target Variable", 
+       subtitle = "Significant imbalance: Majority (Blue) Repaid vs Minority (Red) Default",
+       x = NULL, y = "Proportion") +
+  theme(plot.title.position = "plot",
+        panel.grid.major.x = element_blank())
+
+# Save Plot
+ggsave("fig/target_dist.png", width = 7, height = 5, dpi = 200)
+```
+
+As expected, the data is heavily skewed. 91.93% of applicants repay their loans, while only 8.07% default. This reinforces why "accuracy" is an insufficient metric—focus must be placed on identifying the 8% minority class.
+
+## Key Categorical Relationships
+
+Categories with the highest default rates are analyzed to identify areas of risk. The faceted plot below highlights the specific attributes driving default risk across multiple categories.
+
+```{r categorical_risk_plot, fig.height=10}
+# select categorical features for dashboard
+cat_features <- c("NAME_CONTRACT_TYPE", "CODE_GENDER", "FLAG_OWN_REALTY",
+                  "NAME_INCOME_TYPE", "NAME_EDUCATION_TYPE", "NAME_HOUSING_TYPE")
+
+# prep data for faceted plot
+risk_data <- train_cleaned %>%
+  select(all_of(cat_features), TARGET) %>%
+  pivot_longer(cols = -TARGET, names_to = "Feature", values_to = "Value") %>%
+  group_by(Feature, Value) %>%
+  summarise(
+    Count = n(),
+    Default_Rate = mean(as.numeric(as.character(TARGET))),
+    .groups = "drop"
+  ) %>%
+  filter(Count > 0.01 * nrow(train_cleaned)) # remove rare categories
+
+# plot risk dashboard
+ggplot(risk_data, aes(x = reorder(Value, Default_Rate), y = Default_Rate, fill = Default_Rate)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~Feature, scales = "free_y", ncol = 2) +
+  scale_fill_gradient(low = col_good, high = col_bad) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Default Risk by Applicant Attributes",
+       subtitle = "Risk intensity (Orange) vs. Safety (Teal) across key categories",
+       x = NULL, y = "Default Rate") +
+  theme(legend.position = "none",
+        axis.text.y = element_text(size = 8))
+
+# save dashboard
+ggsave("fig/categorical_risk_dashboard.png", width = 12, height = 10, dpi = 300)
+```
+
+Income source displays significant risk variance, with unemployed applicants and those on maternity leave exhibiting the highest default rates.
+
+## Numeric Correlations
+
+```{r numeric_correlations}
+# Calculate numeric correlations
+numeric_cols <- train_cleaned |> select(where(is.numeric))
+cors <- vapply(numeric_cols, function(x) suppressWarnings(cor(x, as.integer(as.character(train_cleaned$TARGET)), use = "complete.obs")), numeric(1))
+
+corr_tbl <- tibble(Variable = names(cors), Correlation = round(unname(cors), 3)) |>
+  arrange(desc(abs(Correlation))) |> slice_head(n = 12)
+
+corr_tbl %>% print_kbl(caption = "Top Numeric Correlations")
+
+# Visualize correlations with plot
+ggplot(corr_tbl, aes(x = reorder(Variable, abs(Correlation)), y = Correlation, fill = Correlation)) +
+  geom_col(width = .6) +
+  coord_flip() +
+  scale_fill_gradient2(low = col_good, high = col_bad, mid = col_neutral, midpoint = 0) +
+  labs(title = "Top Numeric Correlations with Target", 
+       subtitle = "Blue = Lower Risk (Negative Correlation) | Red = Higher Risk (Positive Correlation)",
+       x = NULL, y = "Pearson r") +
+  theme(plot.title.position = "plot", legend.position = "bottom")
+
+ggsave("fig/top_corrs.png", width = 7, height = 5, dpi = 200)
+```
+
+External source scores are the strongest predictors (negative correlation indicates higher scores correspond to lower risk). Age and employment history also provide significant predictive power.
+
+# AI-Assisted Feature Prioritization
+
+The column list was submitted to an AI credit analyst to generate a domain-based prioritization of predictors.
+
+<details>
+<summary><strong>Click to expand full AI Response</strong></summary>
+
+### Prompt Sent to AI
+
+> You are a credit risk analyst. Below are the column names from my dataset. Based only on the meaning of the variables (no data yet), list the top 15–20 variables you think will be most predictive of the binary target TARGET (1 = default/bad, 0 = good). For each chosen variable give one sentence explaining why you expect it to be predictive. Also list any variables you believe are unlikely to be predictive and why. Finally, identify obvious interactions or non-linear relationships that should be considered later in modeling. Column names: SK_ID_CURR, TARGET, ... \[Truncated list for report\]
+
+### AI response
+
+* **EXT_SOURCE_3** — external credit-scoring features are usually highly predictive because they synthesize credit bureau/third-party signals about borrower risk.
+* **EXT_SOURCE_2** — an additional external score often provides complementary predictive information to **EXT_SOURCE_3**. 
+* **EXT_SOURCE_1** — another external score; together the three **EXT_SOURCE** variables commonly dominate predictive power. 
+* **DAYS_BIRTH** — borrower age (days) correlates with experience, income stability and default behavior (often non-linear).
+* **AMT_CREDIT** — loan amount is directly related to repayment burden and default probability (higher credit often higher risk ceteris paribus).
+* **AMT_INCOME_TOTAL** — household income is fundamental to repayment capacity and moderates other financial ratios.
+* **AMT_ANNUITY** — monthly/annual payment size relative to income indicates stress; high annuity-to-income increases default risk. 
+* **AMT_GOODS_PRICE** — loan purpose/size proxy; when large relative to income it raises risk. 
+* **DAYS_EMPLOYED** — employment tenure (and special sentinel values) captures job stability; short/irregular employment increases risk.
+* **CNT_CHILDREN** — dependents increase household obligations and can reduce repayment capacity.
+* **CNT_FAM_MEMBERS** — household size changes per-capita income dynamics and consumption burden.
+* **NAME_INCOME_TYPE** — income source (pension, state, working, business) strongly affects stability and default propensity.
+* **NAME_EDUCATION_TYPE** — education proxies for earning capacity and financial literacy, correlating with risk.
+* **NAME_HOUSING_TYPE** — housing status (own, mortgage, rent) proxies wealth/stability and collateral availability.
+* **OCCUPATION_TYPE** — job category captures industry/role risk and stability (e.g., seasonal work).
+* **DAYS_ID_PUBLISH** — recency of identity issuance may capture recency of life events / identity stability and sometimes correlates with fraud/risk.
+* **REGION_RATING_CLIENT / REGION_RATING_CLIENT_W_CITY** — regional socio-economic indicators capture local unemployment/credit environment (either one if choose).
+* **OBS_60_CNT_SOCIAL_CIRCLE** — observations in social circle may indicate social-financial exposures; high observation counts can be informative of shared risk.
+* **DEF_60_CNT_SOCIAL_CIRCLE** — defaults observed in social circle are plausible contagion indicators of risk.
+* **AMT_REQ_CREDIT_BUREAU_YEAR** (also MON/QRT/WEEK) — recent credit inquiries reflect active credit shopping and short-term credit stress; year aggregate is often most informative. 
+
+**Note:** I focused on variables that (by domain knowledge) capture borrower ability to pay, historical credit signals, external bureau scores, and household obligations.
+
+**Variables likely to be weak or require special handling**
+
+* **SK_ID_CURR** — identifier only, no predictive content (drop or use for joins).
+* **FLAG_MOBIL / many FLAG_DOCUMENT\_ fields** — these are often almost-constant (e.g., **FLAG_MOBIL** = 1 for most) and have low variance; include only if their distribution shows signal. 
+* **WEEKDAY_APPR_PROCESS_START / HOUR_APPR_PROCESS_START** — could be spurious unless application-time correlates with channel/fraud; usually weak. 
+* Highly aggregated census-style **\_MODE, \_MEDI, \_AVG** — could be useful, but many are derived from applicant’s neighborhood and can be redundant with **REGION\_**; treat carefully. 
+* **BASEMENTAREA\_ / COMMONAREA\_ etc.** — building-level averages may be noisy or frequently missing; predictive only if well-populated and aligned with applicant address. 
+* **FLAG_EMAIL / FLAG_PHONE** — if nearly all are 1/0 they carry little info; but missingness patterns might be informative. 
+
+**Suggested interactions & non-linearities to consider**
+
+* **Annuity / Income interaction: AMT_ANNUITY / AMT_INCOME_TOTAL** (annuity-to-income ratio) — expected strong non-linear effect.
+* **Credit / Income / Age triad: AMT_CREDIT × AMT_INCOME_TOTAL × DAYS_BIRTH** — same loan may be riskier for younger/low-income customers.
+* **EXT_SOURCEs combined:** non-linear combination or monotonic binning of **EXT_SOURCE_1/2/3** often beats single-score use.
+* **Employment & Income Type: DAYS_EMPLOYED × NAME_INCOME_TYPE** — short employment may be more severe for wage-earners than for pensioners.
+* **Region × Housing: REGION_RATING_CLIENT × NAME_HOUSING_TYPE** — regional economic conditions interact with housing tenure to change risk.
+* **Counts extreme effects: CNT_CHILDREN, CNT_FAM_MEMBERS** may show non-linear (both 0 and very large values could behave differently); consider binning.
+
+</details>
+
+### Our Response to AI Generation
+
+The AI correctly prioritized "external source" scores and "age" as top predictors, aligning with the empirical EDA findings. It also highlighted `AMT_CREDIT` as a key variable. However, data analysis revealed that city ratings and the recency of phone changes were also significant, which the AI did not emphasize. This suggests that domain knowledge must be combined with actual data inspection for a complete picture.
+
+## Venn Diagram
+
+```{r venn_diagram}
+# compare AI vs Data selection
+AI_vars  <- c("EXT_SOURCE_3","EXT_SOURCE_2","EXT_SOURCE_1","DAYS_BIRTH","AMT_CREDIT","AMT_INCOME_TOTAL")
+Data_vars <- c("EXT_SOURCE_3","EXT_SOURCE_2","EXT_SOURCE_1","DAYS_BIRTH","DAYS_EMPLOYED","REGION_RATING_CLIENT_W_CITY")
+
+venn.plot <- venn.diagram(
+  x = list(AI = AI_vars, Data = Data_vars),
+  filename = NULL,
+  fill = c(col_line3, col_good), 
+  alpha = 0.5, cex = 1.5,
+  cat.col = c(col_line3, col_good)
+)
+grid.draw(venn.plot)
+ggsave("fig/venn_ai_data.png", width = 7, height = 5, dpi = 200)
+```
+
+## EDA Results
+
+The exploratory data analysis confirms that external scores are the dominant predictors. Empirical evidence also points to age, employment duration, and phone change recency as valuable signals. These insights are critical for understanding the customer base and refining the modeling strategy.
+
+# Model Analysis
+
+The modeling phase establishes a baseline against the 91.92% repayment rate. The goal is not simple accuracy but optimizing the AUC-ROC score to correctly predict the 8% of applicants who default.
+
+A progression of models was built: Logistic Regression, Decision Tree, Random Forest, and Gradient Boosting. A 70:30 data partition split ensures testing on unseen data.
+
+## Logistic Regression Model
+
+Logistic Regression establishes a baseline using the key predictors identified earlier: `EXT_SOURCE` variables, `AGE_YEARS`, and `YEARS_EMPLOYED`.
+
+```{r local_split, include=FALSE}
+# train/test split
+set.seed(1234)
+train_index <- sample(1:nrow(train_cleaned), 0.7 * nrow(train_cleaned))
+train_data  <- train_cleaned[train_index, ]
+test_data   <- train_cleaned[-train_index, ]
+```
+
+```{r logistic_models}
+# validate model performance
+validate_model <- function(model, test_df, predictors) {
+  clean_test <- test_df[complete.cases(test_df[, predictors]), ]
+  preds <- predict(model, newdata = clean_test, type = "response")
+  actuals <- as.numeric(as.character(clean_test$TARGET))
+  roc_obj <- roc(actuals, preds, quiet = TRUE)
+  return(list(roc = roc_obj, auc = auc(roc_obj)))
+}
+
+# train comparison models
+# Model 1: Key Predictors
+predictors_1 <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed", 
+                  "AGE_YEARS", "YEARS_EMPLOYED")
+log_model1 <- glm(TARGET ~ EXT_SOURCE_3 + EXT_SOURCE_2 + export_source_1_imputed + 
+                    AGE_YEARS + YEARS_EMPLOYED, 
+                  data = train_data, family = "binomial")
+
+# Model 2: Gender Only
+predictors_2 <- "CODE_GENDER"
+log_model2 <- glm(TARGET ~ CODE_GENDER, data = train_data, family = "binomial")
+
+# Model 3: Income Only
+predictors_3 <- "AMT_INCOME_TOTAL"
+log_model3 <- glm(TARGET ~ AMT_INCOME_TOTAL, data = train_data, family = "binomial")
+
+# evaluate
+res1 <- validate_model(log_model1, test_data, predictors_1)
+res2 <- validate_model(log_model2, test_data, predictors_2)
+res3 <- validate_model(log_model3, test_data, predictors_3)
+
+# print metrics
+cat("Model 1 (Key Predictors) AUC:", round(res1$auc, 4), "\n")
+cat("Model 2 (Gender)         AUC:", round(res2$auc, 4), "\n")
+cat("Model 3 (Income)         AUC:", round(res3$auc, 4), "\n")
+
+# roc comparison plot
+plot(res1$roc, col = col_line1, lwd = 3, main = "ROC Curves for Logistic Models", grid = TRUE)
+plot(res2$roc, col = col_line2, add = TRUE, lwd = 2, lty = 2)
+plot(res3$roc, col = col_line3, add = TRUE, lwd = 2, lty = 3)
+legend("bottomright", 
+       legend = c(paste0("Model 1: Key Predictors (AUC: ", round(res1$auc, 3), ")"),
+                  paste0("Model 2: Gender (AUC: ", round(res2$auc, 3), ")"),
+                  paste0("Model 3: Income (AUC: ", round(res3$auc, 3), ")")),
+       col = c(col_line1, col_line2, col_line3), 
+       lwd = c(3, 2, 2), lty = c(1, 2, 3))
+```
+
+### Logistic Regression Model Analysis
+
+Model 1, utilizing the key predictors, performed reasonably well. Models relying solely on gender or income yielded AUC scores near 0.5, indicating no predictive power. This confirms that demographic variables like gender and income are insufficient on their own.
+
+## Decision Tree Model
+
+A Decision Tree was implemented to handle non-linearities and outliers. To address class imbalance, a 5:1 penalty weight was applied to the minority class (default), forcing the model to prioritize identifying high-risk applicants.
+
+```{r decision_tree, fig.width=14, fig.height=9}
+# data prep for tree
+train_tree <- train_data |> 
+  rename(EXT_SRC_1 = export_source_1_imputed) |> 
+  mutate(TARGET = factor(TARGET, levels = c(0, 1), labels = c("Repay", "Default")))
+
+# apply weights
+weights <- ifelse(train_tree$TARGET == "Default", 5, 1)
+
+# train tree
+tree_model <- rpart(
+  TARGET ~ EXT_SOURCE_3 + EXT_SOURCE_2 + EXT_SRC_1 +
+           AGE_YEARS + YEARS_EMPLOYED,
+  data = train_tree,
+  method = "class",
+  weights = weights,
+  control = rpart.control(minsplit = 20, cp = 0.001)
+)
+
+# plot tree
+plot_professional_tree(tree_model)
+
+# validation
+predictors <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed",
+                "AGE_YEARS", "YEARS_EMPLOYED")
+test_clean <- test_data[complete.cases(test_data[, predictors]), ]
+
+test_tree_clean <- test_clean |> 
+  rename(EXT_SRC_1 = export_source_1_imputed) |>
+  mutate(TARGET = factor(TARGET, levels = c(0, 1), labels = c("Repay", "Default")))
+
+tree_probs <- predict(tree_model, newdata = test_tree_clean, type = "prob")[, "Default"]
+
+# roc evaluation
+actuals <- ifelse(test_tree_clean$TARGET == "Default", 1, 0)
+roc_obj <- roc(actuals, tree_probs, quiet = TRUE)
+auc_val <- auc(roc_obj)
+
+# enhanced roc with filled area
+plot(roc_obj, col = col_good, lwd = 2,
+     print.auc = FALSE, 
+     auc.polygon = TRUE, auc.polygon.col = scales::alpha(col_good, 0.2),
+     grid = TRUE,
+     main = "Decision Tree Performance (AUC: 0.685)")
+```
+
+### Decision Tree Model Analysis
+
+The Decision Tree achieved an AUC of 0.6853. While slightly lower than the Logistic model, it provides clear rules for identifying high-risk groups (e.g., applicants with very low external scores). These rules can be used to automatically flag applications.
+
+## Random Forest Model
+
+A Random Forest ensemble of 500 trees was trained to reduce overfitting and improve stability compared to the single decision tree.
+
+```{r random_forest}
+set.seed(1234)
+
+# define predictors
+predictors_rf <- c("EXT_SOURCE_3", "EXT_SOURCE_2", "export_source_1_imputed",
+                   "AGE_YEARS", "YEARS_EMPLOYED")
+
+# train random forest (parallel)
+rf_model <- ranger(
+  formula = as.formula(paste("TARGET ~", paste(predictors_rf, collapse = "+"))),
+  data = train_data,
+  num.trees = 500,
+  mtry = 3,
+  importance = "impurity",
+  probability = TRUE,
+  num.threads = all_cores
+)
+
+# validate
+test_rf_clean <- test_data[complete.cases(test_data[, predictors_rf]), ]
+rf_pred <- predict(rf_model, data = test_rf_clean)
+rf_probs <- rf_pred$predictions[, 2] 
+
+# roc evaluation
+actuals_rf <- as.numeric(as.character(test_rf_clean$TARGET))
+roc_rf <- roc(actuals_rf, rf_probs, quiet = TRUE)
+rf_auc <- auc(roc_rf)
+
+# enhanced roc with filled area
+plot(roc_rf, col = col_good, lwd = 2,
+     print.auc = FALSE, 
+     auc.polygon = TRUE, auc.polygon.col = scales::alpha(col_good, 0.2),
+     grid = TRUE,
+     main = "Random Forest Performance (AUC: 0.651)")
+```
+
+A variable importance plot illustrates which features were most influential in reducing impurity across the 500 trees.
+
+```{r rf_viz}
+# extract importance
+imp_scores <- ranger::importance(rf_model)
+imp_df <- data.frame(Variable = names(imp_scores), Importance = imp_scores) %>%
+  arrange(desc(Importance))
+
+# plot variable importance
+ggplot(imp_df, aes(x = reorder(Variable, Importance), y = Importance, fill = Importance)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_gradient(low = col_neutral, high = col_good, guide = "none") +
+  # add data labels
+  geom_text(aes(label = round(Importance, 1), hjust = -0.2), 
+            size = 3.5, fontface = "bold", color = "black") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) + 
+  labs(title = "Random Forest Variable Importance",
+       subtitle = "EXT_SOURCE variables dominate impurity reduction",
+       x = NULL, y = "Importance Score") +
+  theme(plot.title.position = "plot",
+        panel.grid.major.y = element_blank())
+```
+
+### Random Forest Model Analysis
+
+The Random Forest yielded an AUC of 0.651. This performance was lower than the weighted Decision Tree, likely due to the lack of class weighting in this implementation. However, the importance plot confirms that `EXT_SOURCE` variables are overwhelmingly the most critical decision factors.
+
+## Gradient Boosting Model
+
+Gradient Boosting (XGBoost) was implemented. This is an ensemble method that builds trees sequentially to correct errors from previous trees, making it robust for complex cases.
+
+```{r xgboost_model}
+set.seed(1234)
+
+# handle missing values
+prev_na_action <- options("na.action")
+options(na.action = "na.pass")
+
+# create sparse matrices
+features <- setdiff(names(train_data), "TARGET")
+train_matrix <- sparse.model.matrix(TARGET ~ . - 1, data = train_data[, c("TARGET", features)])
+test_matrix  <- sparse.model.matrix(TARGET ~ . - 1, data = test_data[, c("TARGET", features)])
+
+options(na.action = prev_na_action$na.action)
+
+# label preparation
+train_label <- as.numeric(as.character(train_data$TARGET))
+test_label  <- as.numeric(as.character(test_data$TARGET))
+
+# weighting for imbalance
+neg_count <- sum(train_label == 0)
+pos_count <- sum(train_label == 1)
+scale_weight <- neg_count / pos_count
+
+# hyperparameters
+xgb_params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  eta = 0.1,                
+  max_depth = 6,            
+  subsample = 0.8, 
+  colsample_bytree = 0.8,
+  scale_pos_weight = scale_weight, 
+  nthread = all_cores       
+)
+
+# train xgboost
+xgb_model <- xgb.train(
+  params = xgb_params,
+  data = xgb.DMatrix(data = train_matrix, label = train_label),
+  nrounds = 500,
+  watchlist = list(train = xgb.DMatrix(data = train_matrix, label = train_label),
+                   test  = xgb.DMatrix(data = test_matrix, label = test_label)),
+  print_every_n = 50,
+  early_stopping_rounds = 20,
+  verbose = 0
+)
+
+# generate predictions
+xgb_probs <- predict(xgb_model, test_matrix)
+
+# roc evaluation
+roc_xgb <- roc(test_label, xgb_probs, quiet = TRUE)
+xgb_auc <- auc(roc_xgb)
+
+# enhanced roc with filled area
+plot(roc_xgb, col = col_good, lwd = 2,
+     print.auc = FALSE, 
+     auc.polygon = TRUE, auc.polygon.col = scales::alpha(col_good, 0.5),
+     grid = TRUE,
+     main = "XGBoost Performance (AUC: 0.742)")
+```
+
+The Feature Gain plot below shows the relative contribution of each feature to the model's accuracy.
+
+```{r xgb_viz}
+# extract feature importance
+importance_matrix <- xgboost::xgb.importance(feature_names = colnames(train_matrix), model = xgb_model)
+
+# plot top 10 features by gain
+# Rebuilt manually using ggplot to match standard aesthetics
+xgb_imp_df <- as.data.frame(importance_matrix) %>% 
+  arrange(desc(Gain)) %>% 
+  head(10)
+
+ggplot(xgb_imp_df, aes(x = reorder(Feature, Gain), y = Gain, fill = Gain)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_gradient(low = col_neutral, high = col_good, guide = "none") +
+  geom_text(aes(label = round(Gain, 3), hjust = -0.2), 
+            size = 3.5, fontface = "bold", color = "black") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) + 
+  labs(title = "XGBoost Feature Importance (Gain)",
+       subtitle = "Relative contribution of features to model accuracy",
+       y = "Relative Gain", x = NULL) +
+  theme(plot.title.position = "plot",
+        panel.grid.major.y = element_blank())
+```
+
+### Gradient Boosting Model Analysis
+
+XGBoost achieved a test AUC of 0.742, outperforming all other models. This result confirms its suitability for risk ranking. The Feature Gain plot highlights that `EXT_SOURCE_3` and `EXT_SOURCE_2` are dominant, but `DAYS_EMPLOYED` and `AGE_YEARS` also provide specific high-value splits.
+
+# Kaggle Submission
+
+The final XGBoost model is applied to the official test data to generate the submission file.
+
+```{r kaggle_submission}
+# load test data
+kaggle_test <- read.csv("application_test.csv", check.names = FALSE)
+
+# feature engineering
+kaggle_test <- kaggle_test |>
+  mutate(
+    AGE_YEARS = abs(DAYS_BIRTH) / 365,
+    DAYS_EMPLOYED_FIXED = ifelse(DAYS_EMPLOYED == 365243, NA, DAYS_EMPLOYED),
+    YEARS_EMPLOYED = abs(DAYS_EMPLOYED_FIXED) / 365,
+    YEARS_REGISTERED = abs(DAYS_REGISTRATION) / 365,
+    YEARS_PUBLISH = abs(DAYS_ID_PUBLISH) / 365,
+    export_source_1_imputed = EXT_SOURCE_1
+  )
+
+# matrix creation
+if (!exists("features")) features <- setdiff(names(train_data), "TARGET")
+kaggle_subset <- kaggle_test[, features]
+
+prev_na <- options("na.action"); options(na.action = "na.pass")
+kaggle_matrix_raw <- sparse.model.matrix(~ . - 1, data = kaggle_subset)
+options(na.action = prev_na$na.action)
+
+# column alignment
+model_cols <- xgb_model$feature_names
+missing_cols <- setdiff(model_cols, colnames(kaggle_matrix_raw))
+
+if (length(missing_cols) > 0) {
+  missing_mat <- Matrix(0, nrow = nrow(kaggle_matrix_raw), ncol = length(missing_cols), sparse = TRUE)
+  colnames(missing_mat) <- missing_cols
+  kaggle_matrix_raw <- cbind(kaggle_matrix_raw, missing_mat)
+}
+
+kaggle_matrix_final <- kaggle_matrix_raw[, model_cols]
+
+# predict
+kaggle_probs <- predict(xgb_model, kaggle_matrix_final)
+
+# generate submission file
+submission <- data.frame(
+  SK_ID_CURR = kaggle_test$SK_ID_CURR,
+  TARGET = kaggle_probs
+)
+
+write.csv(submission, "kaggle_xgb_submission_final.csv", row.names = FALSE)
+
+print_kbl(submission, caption = "Final Submission Preview")
+```
+
+The submission achieved a Private score of 0.70126 and a Public score of 0.70297 on Kaggle, indicating strong predictive performance.
+
+# Conclusion
+
+The analysis identified external credit scores as the most robust predictors of default risk. Higher scores strongly correlate with lower risk. Age and employment history provide secondary predictive value, while demographic factors like gender and income show negligible utility in isolation.
+
+The Gradient Boosting model (XGBoost) demonstrated superior performance (AUC 0.742) compared to Logistic Regression, Decision Trees, and Random Forests. It is recommended that Home Credit utilize this model to prioritize the riskiest applicants (e.g., the top 10%) for manual review, thereby optimizing resource allocation and minimizing potential defaults.
