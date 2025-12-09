@@ -1,4 +1,4 @@
-# Home Credit Default Risk Analysis: The "Turnaround" Strategy
+# Home Credit Default Risk Analysis
 
 **Role:** Integration Lead & Data Scientist  
 **Date:** Fall 2025  
