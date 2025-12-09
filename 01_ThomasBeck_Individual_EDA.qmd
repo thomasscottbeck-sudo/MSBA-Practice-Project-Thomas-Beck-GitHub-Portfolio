@@ -99,7 +99,7 @@ I used an AI assistant to generate a hypothesis list of predictors before diving
 > Here is the list of columns: *(reformatted for brevity)*
 
 | Column 1 | Column 2 | Column 3 |
-|:---|:---|:---|
+|:-----------------------|:-----------------------|:-----------------------|
 | SK_ID_CURR | REGION_POPULATION_RELATIVE | REG_REGION_NOT_LIVE_REGION |
 | TARGET | DAYS_BIRTH | REG_REGION_NOT_WORK_REGION |
 | NAME_CONTRACT_TYPE | DAYS_EMPLOYED | LIVE_REGION_NOT_WORK_REGION |
@@ -477,7 +477,7 @@ There is strong overlap (4 variables). The main difference is that the AI focuse
 BBased on the statistical evidence gathered (Correlations, Density Separation, and Categorical Lift), the top 20 most promising predictors have been identified for the subsequent modeling phase.
 
 | Rank | Variable Name | Notes |
-|:---|:---|:---|
+|:-----------------------|:-----------------------|:-----------------------|
 | 1 | **EXT_SOURCE_3** | Strongest negative correlation with default. |
 | 2 | **EXT_SOURCE_2** | Second strongest external predictor. |
 | 3 | **EXT_SOURCE_1** | Significant when imputed. |
