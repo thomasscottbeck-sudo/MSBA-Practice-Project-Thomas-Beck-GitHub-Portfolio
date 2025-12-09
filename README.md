@@ -1,5 +1,4 @@
 # Home Credit Default Risk Analysis
-
 **Role:** Integration Lead & Data Scientist  
 **Date:** Fall 2025  
 **Status:** Complete (Champion Model AUC: 0.742)  
