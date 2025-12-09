@@ -29,44 +29,31 @@
 
 ---
 
-## 3. The Technical Narrative: From "Messy" to "Masterpiece"
+## 3. My Contributions: Integration & Standardization
 
-I joined the project mid-stream to help unify our individual analyses into a single, reproducible production pipeline. This meant auditing our prior work and refactoring the code to ensure it was robust enough for deployment.
+I joined the project mid-stream to help unify our individual analyses into a single, reproducible production pipeline. My primary focus was auditing our prior work, refactoring code, and ensuring robust model selection.
 
-### **Phase I: The Hypothesis Audit (File 01)**
-My first step was to audit our assumptions. I formulated a specific set of guiding questions to test "Human Intuition" against "Statistical Reality."
-* **The Finding:** Common sense was often wrong. While the AI assistant predicted that **Income** would be a primary driver, the statistical evidence (Correlations and Density Plots) proved it was a weak predictor. The real signal came from **External Sources** (credit bureau proxies) and **Employment Stability**. This pivoted our entire feature engineering strategy.
-
-### **Phase II: The "Negative Result" (File 02)**
-To test the limits of our data, I built a Python-based **Neural Network (MLP)**. The hypothesis was that deep learning might extract latent features that linear models missed.
-* **The Outcome:** It failed (AUC ~0.56). The data was too noisy for a neural net to converge effectively.
-* **The Value:** This failure was a crucial strategic win. It stopped us from over-engineering the solution and justified our decision to double down on **Tree-Based Ensembles (XGBoost)** in R.
-
-### **Phase III: The "Fix" (File 04)**
-Inheriting the team's initial draft (File 03), I faced a "Frankenstein" code base with mixed syntax and absolute file paths.
-* **Engineering:** I implemented the `here` package to make paths relative (solving the "it works on my machine" bug) and added `doParallel` to enable multi-core processing, cutting our training time by **40%**.
-
-### **Phase IV: The Scientific Selection (File 05)**
-We moved beyond "trying things" to a rigorous tournament of four algorithms:
-* **Logistic Regression:** Good baseline (AUC 0.73) but failed to capture non-linear risk factors.
-* **Random Forest:** Failed (AUC 0.65). It struggled with the 92:8 class imbalance because Bagging averages out the minority signal.
-* **XGBoost (The Winner):** Champion (AUC 0.74). Boosting sequentially corrected errors on the minority class, effectively "hunting" the defaults that other models missed.
+### **Key Contributions:**
+* **Bilingual Implementation (R & Python):** I demonstrated flexibility across data science ecosystems by managing the main pipeline in **R (Quarto/RMarkdown)** while simultaneously conducting deep learning experiments in **Python (Jupyter/Scikit-Learn)**.
+* **Workflow Unification:** I merged disparate scripts into a standardized **Quarto** framework. This ensured consistent visual styling (Teal/Orange palette) and report formatting across the entire project lifecycle.
+* **Reproducibility Engineering:** I refactored the codebase to implement robust file paths using `here::here()`, resolving environmental dependencies so the code runs reliably on any machine.
+* **Model Comparison Framework:** I designed and executed the "Model Bake-Off" (File 05), a rigorous comparative analysis that scientifically validated our move from Logistic Regression to Gradient Boosting (XGBoost).
 
 ---
 
 ## 4. Difficulties Encountered
 
-### **1. The "Frankenstein" Codebase**
-**Challenge:** Inheriting a project in mid-flight meant dealing with conflicting variable names, hard-coded file paths (e.g., `C:/Users/Name...`), and mixed coding styles (Base R vs. Tidyverse).
-**Solution:** I led the standardization effort, creating a unified data dictionary and implementing a consistent coding standard. This turned a collection of scripts into a cohesive software product.
+### **1. Integrating Diverse Workflows**
+**Challenge:** Our team used a mix of tools (R and Python) and different coding styles (Base R vs. Tidyverse), which made it difficult to combine work into a single document.
+**Solution:** I led the standardization effort (File 04), creating a unified data dictionary and standardizing syntax. This allowed us to merge our individual strengths into a single, seamless narrative.
 
-### **2. Parallel Processing vs. Reproducibility**
-**Challenge:** While implementing `doParallel` sped up our Random Forest training, it introduced instability when knitting the final reports. Race conditions occasionally caused chunks to fail or output disordered logs.
+### **2. Parallel Processing Trade-offs**
+**Challenge:** Implementing `doParallel` sped up model training significantly, but it introduced instability when knitting the final reports. Race conditions occasionally caused chunks to fail or output disordered logs.
 **Solution:** I learned to toggle between multi-core processing for training (speed) and single-core execution for final rendering (stability). This hybrid approach saved hours of compute time while ensuring the final report was error-free.
 
 ### **3. The Accuracy Trap**
-**Challenge:** Our early Decision Trees showed 92% accuracy but failed to predict a single default. The severe class imbalance masked the model's inability to learn the minority class.
-**Solution:** We pivoted entirely to **AUC-ROC** as our north star metric. This forced us to abandon models that prioritized the majority class in favor of Gradient Boosting, which could be tuned to penalize false negatives more heavily.
+**Challenge:** Early models showed 92% accuracy but failed to predict defaults. The severe class imbalance masked the model's inability to learn the minority class.
+**Solution:** We pivoted entirely to **AUC-ROC** as our north star metric. This forced us to abandon simple decision trees (which prioritized the majority class) in favor of Gradient Boosting, which could be tuned to penalize false negatives more heavily.
 
 ---
 
@@ -74,4 +61,23 @@ We moved beyond "trying things" to a rigorous tournament of four algorithms:
 
 * **Professional Notebook Architecture:** I mastered the **Quarto** framework to transform raw code into executive-ready HTML reports. Learning to control code folding, CSS styling, and tabsets was essential for creating a portfolio that looks as good as the code runs.
 * **The Power of "Negative Results":** My failed Python Neural Network experiment (File 02) taught me that more complexity doesn't always mean better performance. Documenting this failure was just as valuable as the success of the XGBoost model because it scientifically justified our architectural choices.
-* **Compute Optimization:** I
+* **Compute Optimization:** I gained a deep appreciation for hardware resource management. Learning to detect logical cores and assign parallel backends allowed me to train complex Random Forest ensembles in minutes rather than hours.
+* **The "Accuracy Trap":** I learned that 92% accuracy is meaningless when 92% of the classes are the same. Pivoting to **AUC-ROC** shifted our focus to ranking risk rather than just predicting the majority class.
+* **Reproducibility Engineering:** I moved beyond "it works on my machine" by implementing robust file paths (using `here::here()`) and standardizing our code environment to ensure anyone could run our analysis.
+
+---
+
+## 6. Business Value of the Solution
+
+Our final XGBoost model (File 06) delivers tangible ROI by solving the "Cost vs. Risk" trade-off:
+
+1.  **Operational Efficiency:** The model allows Home Credit to **automate approval for 90% of applicants** (the "Safe" deciles), drastically reducing manual underwriting costs.
+2.  **Risk Mitigation:** By flagging the top 10% of applicants by risk score, the model captures the majority of likely defaults *before* funds are disbursed.
+3.  **Financial Inclusion:** The precise risk ranking allows the business to offer tailored products (lower amounts or different terms) to "borderline" applicants who would otherwise be rejected outright.
+
+---
+
+## 7. Technical Stack
+* **Languages:** R (Quarto, RMarkdown), Python (Jupyter).
+* **Modeling:** `tidymodels`, `xgboost`, `caret`, `scikit-learn`, `ranger`.
+* **Data Ops:** `tidyverse`, `here`, `doParallel` (CPU Optimization).
