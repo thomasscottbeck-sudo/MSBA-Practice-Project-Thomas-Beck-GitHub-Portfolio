@@ -1,4 +1,5 @@
-# Home Credit Default Risk Analysis
+# Home Credit Default Risk Analysis: The "Turnaround" Strategy
+
 **Role:** Integration Lead & Data Scientist  
 **Date:** Fall 2025  
 **Status:** Complete (Champion Model AUC: 0.742)  
@@ -58,10 +59,10 @@ I joined the project mid-stream to help unify our individual analyses into a sin
 
 ## 5. What I Learned
 
+* **Comparative Machine Learning Architectures:** By testing the exact same dataset across the full spectrum of algorithms—from linear baselines (Logistic Regression) to ensemble methods (XGBoost) and Deep Learning (Neural Networks)—I gained a practical understanding of where each architecture excels. The project demonstrated that for tabular financial data with high noise, tree-based boosting often outperforms neural networks.
+* **Complexity is not the same as performance:** My Python Neural Network experiment (File 02) proved that complexity does not guarantee performance. The simpler engineered features in the linear model often outperformed the raw features in the deep learning model, reinforcing that feature engineering often yields a higher ROI than model architecture tuning.
 * **Professional Notebook Architecture:** I mastered the **Quarto** framework to transform raw code into executive-ready HTML reports. Learning to control code folding, CSS styling, and tabsets was essential for creating a portfolio that looks as good as the code runs.
-* **The Power of "Negative Results":** My failed Python Neural Network experiment (File 02) taught me that more complexity doesn't always mean better performance. Documenting this failure was just as valuable as the success of the XGBoost model because it scientifically justified our architectural choices.
 * **Compute Optimization:** I gained a deep appreciation for hardware resource management. Learning to detect logical cores and assign parallel backends allowed me to train complex Random Forest ensembles in minutes rather than hours.
-* **The "Accuracy Trap":** I learned that 92% accuracy is meaningless when 92% of the classes are the same. Pivoting to **AUC-ROC** shifted our focus to ranking risk rather than just predicting the majority class.
 * **Reproducibility Engineering:** I moved beyond "it works on my machine" by implementing robust file paths (using `here::here()`) and standardizing our code environment to ensure anyone could run our analysis.
 
 ---
