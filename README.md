@@ -1,22 +1,23 @@
 # Home Credit Default Risk Analysis
+**University of Utah | MSBA Practice Project**
 
 **Role:** Integration Lead & Data Scientist  
-**Date:** Fall 2025  
-**Status:** Complete (Champion Model AUC: 0.742)  
+**Scope:** End-to-End Predictive Pipeline  
+**Status:** Production Ready (Champion Model AUC: 0.742)  
 
 ---
 
 ## 1. Executive Summary
-**The Mission:** Home Credit aims to broaden financial inclusion for unbanked populations by providing positive borrowing experiences. The core challenge is **Information Asymmetry**: predicting repayment capability without traditional credit histories.
+The primary objective of this project is to solve the problem of **Information Asymmetry** for Home Credit. Many potential borrowers lack traditional credit histories, leading to financial exclusion. This project develops a robust predictive framework to evaluate repayment capability using alternative data sources.
 
-**The Analytic Constraint:** Standard accuracy is a misleading metric for this project due to a severe **92:8 class imbalance** (only 8% of applicants default). A naive model predicting "all repay" would be 92% accurate but would fail to mitigate any financial risk.
+**The Analytic Constraint:** Standard accuracy is a deceptive metric in this context due to a **92:8 class imbalance** (only 8% default rate). A baseline model predicting "no default" for every applicant achieves 92% accuracy while providing zero business value. 
 
-**The Solution:** This repository documents a production-grade data science pipeline that optimizes for **Risk Ranking (AUC-ROC)**. By identifying "invisible" high-risk applicants, the model enables a "Top Decile" strategy—flagging the riskiest 10% of applicants for manual review, capturing the majority of defaults without slowing down approval for safe borrowers.
+**The Solution:** This repository documents a production-grade data science pipeline optimized for **Risk Ranking (AUC-ROC)**. By implementing a "Top Decile" strategy, the model identifies the riskiest 10% of applicants for manual underwriting, capturing the majority of potential defaults without impeding the automated approval process for creditworthy borrowers.
 
 ---
 
 ## 2. Project Dashboard
-*Click "Source" to view code logic or "Report" for the rendered executive summary.*
+*A comprehensive lifecycle of the analysis, from discovery to the final champion model.*
 
 | Phase | Deliverable | Source Code | Executive Report |
 | :--- | :--- | :---: | :---: |
@@ -29,55 +30,53 @@
 
 ---
 
-## 3. My Contributions: Integration & Standardization
+## 3. Professional Contributions: Systems Integration
 
-I joined the project mid-stream to help unify our individual analyses into a single, reproducible production pipeline. My primary focus was auditing our prior work, refactoring code, and ensuring robust model selection.
+I spearheaded the integration of disparate analyses into a unified, reproducible production pipeline. My focus was on technical auditing, code refactoring, and establishing a rigorous model selection framework within the MSBA program curriculum.
 
-### **Key Contributions:**
-* **Bilingual Implementation (R & Python):** I demonstrated flexibility across data science ecosystems by managing the main pipeline in **R (Quarto/RMarkdown)** while simultaneously conducting deep learning experiments in **Python (Jupyter/Scikit-Learn)**.
-* **Workflow Unification:** I merged disparate scripts into a standardized **Quarto** framework. This ensured consistent visual styling (Teal/Orange palette) and report formatting across the entire project lifecycle.
-* **Reproducibility Engineering:** I refactored the codebase to implement robust file paths using `here::here()`, resolving environmental dependencies so the code runs reliably on any machine.
-* **Model Comparison Framework:** I designed and executed the "Model Bake-Off" (File 05), a rigorous comparative analysis that scientifically validated our move from Logistic Regression to Gradient Boosting (XGBoost).
-
----
-
-## 4. Difficulties Encountered
-
-### **1. Integrating Diverse Workflows**
-**Challenge:** Our team used a mix of tools (R and Python) and different coding styles (Base R vs. Tidyverse), which made it difficult to combine work into a single document.
-**Solution:** I led the standardization effort (File 04), creating a unified data dictionary and standardizing syntax. This allowed us to merge our individual strengths into a single, seamless narrative.
-
-### **2. Parallel Processing Trade-offs**
-**Challenge:** Implementing `doParallel` sped up model training significantly, but it introduced instability when knitting the final reports. Race conditions occasionally caused chunks to fail or output disordered logs.
-**Solution:** I learned to toggle between multi-core processing for training (speed) and single-core execution for final rendering (stability). This hybrid approach saved hours of compute time while ensuring the final report was error-free.
-
-### **3. The Accuracy Trap**
-**Challenge:** Early models showed 92% accuracy but failed to predict defaults. The severe class imbalance masked the model's inability to learn the minority class.
-**Solution:** We pivoted entirely to **AUC-ROC** as our north star metric. This forced us to abandon simple decision trees (which prioritized the majority class) in favor of Gradient Boosting, which could be tuned to penalize false negatives more heavily.
+### **Core Competencies Demonstrated:**
+* **Cross-Functional Implementation:** Managed a bilingual pipeline, utilizing **R (Quarto)** for the primary production environment and **Python (Scikit-Learn)** for deep learning experimentation.
+* **Workflow Standardization:** Unified heterogeneous coding styles into a standardized Quarto framework, ensuring consistent visual aesthetics and data dictionaries across all project phases.
+* **Reproducibility Engineering:** Eliminated environmental dependencies by implementing the `here::here()` protocol for robust file path management.
+* **Scientific Model Validation:** Engineered a "Model Bake-Off" framework to objectively compare performance across Logistic Regression, Random Forests, and Gradient Boosting (XGBoost).
 
 ---
 
-## 5. What I Learned
+## 4. Engineering Challenges & Strategic Solutions
 
-* **Comparative Machine Learning Architectures:** By testing the exact same dataset across the full spectrum of algorithms—from linear baselines (Logistic Regression) to ensemble methods (XGBoost) and Deep Learning (Neural Networks)—I gained a practical understanding of where each architecture excels. The project demonstrated that for tabular financial data with high noise, tree-based boosting often outperforms neural networks.
-* **Complexity is not the same as performance:** My Python Neural Network experiment (File 02) proved that complexity does not guarantee performance. The simpler engineered features in the linear model often outperformed the raw features in the deep learning model, reinforcing that feature engineering often yields a higher ROI than model architecture tuning.
-* **Professional Notebook Architecture:** I mastered the **Quarto** framework to transform raw code into executive-ready HTML reports. Learning to control code folding, CSS styling, and tabsets was essential for creating a portfolio that looks as good as the code runs.
-* **Compute Optimization:** I gained a deep appreciation for hardware resource management. Learning to detect logical cores and assign parallel backends allowed me to train complex Random Forest ensembles in minutes rather than hours.
-* **Reproducibility Engineering:** I moved beyond "it works on my machine" by implementing robust file paths (using `here::here()`) and standardizing our code environment to ensure anyone could run our analysis.
+### **Metric Optimization (The Accuracy Trap)**
+* **Challenge:** Initial models yielded high accuracy (92%) but failed to distinguish between default and non-default cases due to class imbalance.
+* **Solution:** Pivoted the evaluation metric to **AUC-ROC**. This strategic shift moved the project away from simplistic decision trees toward Gradient Boosting, which allows for finer tuning of the probability threshold to minimize false negatives.
+
+### **Computational Resource Management**
+* **Challenge:** Training complex ensemble models introduced high latency and potential instability during the document knitting process.
+* **Solution:** Integrated `doParallel` for multi-core processing. I developed a hybrid execution strategy: utilizing parallel backends for intensive training and switching to single-core execution for stable report rendering.
+
+### **Codebase Unification**
+* **Challenge:** Merging diverse technical approaches (Base R vs. Tidyverse) from multiple contributors into a coherent narrative.
+* **Solution:** Led a refactoring effort to standardize syntax and visual formatting, resulting in a professional, "executive-ready" document suite.
 
 ---
 
-## 6. Business Value of the Solution
+## 5. Technical Insights
 
-Our final XGBoost model (File 06) delivers tangible ROI by solving the "Cost vs. Risk" trade-off:
+* **Model Architecture vs. Feature ROI:** Testing algorithms ranging from linear baselines to Deep Learning (Neural Networks) revealed that for tabular financial data, feature engineering and ensemble tree methods (XGBoost) consistently outperformed more complex neural architectures.
+* **Advanced Notebook Architecture:** Leveraged the Quarto framework to implement professional features such as code folding, custom CSS, and interactive tabsets, ensuring the analysis is accessible to both technical and executive stakeholders.
+* **Hardware Optimization:** Gained expertise in logical core detection and parallel backend assignment, reducing model training cycles from hours to minutes.
 
-1.  **Operational Efficiency:** The model allows Home Credit to **automate approval for 90% of applicants** (the "Safe" deciles), drastically reducing manual underwriting costs.
-2.  **Risk Mitigation:** By flagging the top 10% of applicants by risk score, the model captures the majority of likely defaults *before* funds are disbursed.
-3.  **Financial Inclusion:** The precise risk ranking allows the business to offer tailored products (lower amounts or different terms) to "borderline" applicants who would otherwise be rejected outright.
+---
+
+## 6. Business Value & ROI
+
+The final XGBoost solution provides a data-driven path to optimizing the "Cost vs. Risk" trade-off:
+
+1.  **Operational Scalability:** Enables the automation of approvals for 90% of applicants, significantly reducing manual underwriting overhead.
+2.  **Strategic Risk Mitigation:** Identifies high-risk segments prior to disbursement, protecting the portfolio from significant capital loss.
+3.  **Expanded Market Reach:** Precise risk ranking allows Home Credit to extend credit to underserved but creditworthy individuals by substituting traditional history with predictive alternative data.
 
 ---
 
 ## 7. Technical Stack
 * **Languages:** R (Quarto, RMarkdown), Python (Jupyter).
-* **Modeling:** `tidymodels`, `xgboost`, `caret`, `scikit-learn`, `ranger`.
-* **Data Ops:** `tidyverse`, `here`, `doParallel` (CPU Optimization).
+* **Modeling Frameworks:** `tidymodels`, `xgboost`, `caret`, `scikit-learn`, `ranger`.
+* **Utilities:** `tidyverse`, `here`, `doParallel` (CPU Optimization).
